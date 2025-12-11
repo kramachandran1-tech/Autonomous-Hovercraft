@@ -1,1 +1,65 @@
 
+#include <Servo.h>
+Servo esc; // create servo object to control the ESC
+
+// Ultrasonic sensor pins
+const int trigPin = 6;
+const int echoPin = 7; 
+
+// ESC throttle values
+const int slowSpeed = 1200;   // adjust for your motor/ESC (could be change depend on the ESC)
+const int fastSpeed = 1700;   // adjust for your motor/ESC (could be change depend on the ESC)
+
+long duration;
+float distance;
+
+void setup() { 
+  Serial.begin(9600); 
+
+  // ESC setup
+  esc.attach(9); // Attach the ESC on pin 9
+  delay(2000); 
+  Serial.print("ESC ready");
+
+  // Ultrasonic setup
+  pinMode(trigPin, OUTPUT); // Attach the Trig on pin 6
+  pinMode(echoPin, INPUT); // Attach the ECHO on pin 7
+}
+
+float getDistance() {
+  // Clear trigger
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+
+  // Trigger pulse
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  // Get echo time (microseconds)
+  duration = pulseIn(echoPin, HIGH);
+
+  // Convert to distance in meters
+  distance = duration * 0.034/2; // (sound speed / 2)
+  return distance;
+}
+
+void loop() {
+  float d = getDistance();
+  Serial.print("Distance (cm): ");
+  Serial.println(d);
+
+  if (d < 15) {
+    // Too close → slow down
+    esc.writeMicroseconds(slowSpeed);
+    Serial.println("Slow speed");
+  } 
+  else {
+    // Far enough → run fast
+    esc.writeMicroseconds(fastSpeed);
+    Serial.println("Fast speed");
+  }
+
+  delay(100);
+}
+
