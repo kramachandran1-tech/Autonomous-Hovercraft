@@ -1,31 +1,54 @@
-#include <bluefruit.h>
-BLEUart bleuart;
-void setup() {
-  Serial.begin(115200);
+  #include <bluefruit.h>
 
-  // Wait up to 5 seconds for Serial Monitor instead of freezing forever
-  unsigned long start = millis();
-  while (!Serial && millis() - start < 5000) { }
+int setSpeed = 000;
+char msg[32];
 
-  Serial.println("Serial is working — Starting BLE...");
+void updateAdvertisement() {
+  // Stop advertising 
+  Bluefruit.Advertising.stop();
 
-  Bluefruit.begin();
-  Serial.println("BLE initialized.");
-  bleuart.begin();
+  // Clear old  data
+  Bluefruit.Advertising.clearData();
 
-  Bluefruit.setName("CPB-TX");
+  // Rebuild the message
+  sprintf(msg, "KREESHA%d", setSpeed);
 
-  uint8_t data[] = { 'H', 'E', 'L', 'L', 'O' };
-  Bluefruit.Advertising.addManufacturerData(data, sizeof(data));
-  Bluefruit.Advertising.addService(bleuart);
+  Bluefruit.Advertising.addManufacturerData((uint8_t*)msg, strlen(msg));
 
   Bluefruit.Advertising.start();
+}
+
+void setup() {
+  Serial.begin(115200);
+  while (!Serial) {}
+
+  Bluefruit.begin();
+  Bluefruit.setName("CPB-TX");
+
+  updateAdvertisement();
+
   Serial.println("Advertising started.");
 }
 
 void loop() {
-  Serial.println("Loop running...");
+
   delay(1000);
-  bleuart.write('11222');
-  delay(100);
+
+  setSpeed = 100;   
+
+  Serial.print("Updating speed to: ");
+  Serial.println(setSpeed);
+
+  updateAdvertisement();   
+
+  delay(1000);
+
+  setSpeed = 350;  
+
+  Serial.print("Updating speed to: ");
+  Serial.println(setSpeed);
+
+  updateAdvertisement();   
+
+
 }
