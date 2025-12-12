@@ -1,4 +1,3 @@
-// THE CODE IS WORK BUT NEED TO WORK ON THE SPEED CHANGING 
 
 #include <Servo.h>
 Servo esc; // create servo object to control the ESC
@@ -8,8 +7,8 @@ const int trigPin = 6;
 const int echoPin = 7; 
 
 // ESC throttle values
-const int slowSpeed = 1200;   // adjust for your motor/ESC (could be change depend on the ESC)
-const int fastSpeed = 1700;   // adjust for your motor/ESC (could be change depend on the ESC)
+const int slowSpeed = 1550;   // adjust for your motor/ESC (could be change depend on the ESC)
+const int fastSpeed = 2000;   // adjust for your motor/ESC (could be change depend on the ESC)
 
 long duration;
 float distance;
@@ -54,13 +53,16 @@ void loop() {
     // Too close → slow down
     esc.writeMicroseconds(slowSpeed);
     Serial.println("Slow speed");
+    delay(20);
   } 
   else {
     // Far enough → run fast
     esc.writeMicroseconds(fastSpeed);
     Serial.println("Fast speed");
+    delay(20);
   }
 
   delay(100);
 }
 
+//esc.writeMicroseconds(fastSpeed);
