@@ -7,8 +7,10 @@ const int trigPin = 6;
 const int echoPin = 7; 
 
 // ESC throttle values
-const int slowSpeed = 1550;   // adjust for your motor/ESC (could be change depend on the ESC)
-const int fastSpeed = 2000;   // adjust for your motor/ESC (could be change depend on the ESC)
+const int stop = 1500; // adjust for your motor/ESC (could be change depend on the ESC)
+const int slowSpeed = 1600;   // adjust for your motor/ESC (could be change depend on the ESC)
+const int minSpeed = 1800;   // adjust for your motor/ESC (could be change depend on the ESC)
+const int fastSpeed = 2000; // adjust for your motor/ESC (could be change depend on the ESC)
 
 long duration;
 float distance;
