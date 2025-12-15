@@ -1,70 +1,103 @@
-
 #include <Servo.h>
-Servo esc; // create servo object to control the ESC
+Servo esc;
 
-// Ultrasonic sensor pins
+// Ultrasonic pins
 const int trigPin = 6;
-const int echoPin = 7; 
+const int echoPin = 7;
 
-// ESC throttle values
-const int stop = 1500; // adjust for your motor/ESC (could be change depend on the ESC)
-const int slowSpeed = 1600;   // adjust for your motor/ESC (could be change depend on the ESC)
-const int minSpeed = 1800;   // adjust for your motor/ESC (could be change depend on the ESC)
-const int fastSpeed = 2000; // adjust for your motor/ESC (could be change depend on the ESC)
+// ESC throttle levels (adjust to your ESC & motor)
+const int minThrottle = 1500;
+const int slowThrottle = 1600;
+const int mediumThrottle = 1700;
+const int fastThrottle = 1800;
 
-long duration;
-float distance;
+// Ramping speed (microseconds per loop)
+const int rampStep = 5;      // How much the throttle changes per step
+const int rampDelay = 20;    // Delay for smoothness (ms)
 
-void setup() { 
-  Serial.begin(9600); 
+int currentThrottle = minThrottle;
 
-  // ESC setup
-  esc.attach(9); // Attach the ESC on pin 9
-  delay(2000); 
-  Serial.print("ESC ready");
+// ------------------------------
+// Distance measurement (average)
+// ------------------------------
+float getFilteredDistance() {
+  long total = 0;
+  const int samples = 5;     // number of samples to average
 
-  // Ultrasonic setup
-  pinMode(trigPin, OUTPUT); // Attach the Trig on pin 6
-  pinMode(echoPin, INPUT); // Attach the ECHO on pin 7
+  for (int i = 0; i < samples; i++) {
+    // Trigger pulse
+    digitalWrite(trigPin, LOW);
+    delayMicroseconds(2);
+    digitalWrite(trigPin, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(trigPin, LOW);
+
+    long duration = pulseIn(echoPin, HIGH, 25000); // 25 ms timeout
+    float d = duration * 0.034/2;                // cm
+
+    total += d * 10; // store in mm to avoid float issues
+    delay(10);
+  }
+
+  return (total / samples) / 10.0; // return distance in cm
 }
 
-float getDistance() {
-  // Clear trigger
-  digitalWrite(trigPin, LOW);
-  delayMicroseconds(2);
+// ------------------------------
+// Ramping function
+// ------------------------------//
+/*
+void rampTo(int targetThrottle) {
+  if (currentThrottle < targetThrottle) {
+    currentThrottle += rampStep;
+  } else if (currentThrottle > targetThrottle) {
+    currentThrottle -= rampStep;
+  }
 
-  // Trigger pulse
-  digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
+  // Limit bounds
+  if (currentThrottle > 2000) currentThrottle = 2000;
+  if (currentThrottle < minThrottle) currentThrottle = minThrottle;
 
-  // Get echo time (microseconds)
-  duration = pulseIn(echoPin, HIGH);
+  esc.writeMicroseconds(currentThrottle);
+  delay(rampDelay);
+}
+*/
+void setup() {
+  Serial.begin(9600);
 
-  // Convert to distance in meters
-  distance = duration * 0.034/2; // (sound speed / 2)
-  return distance;
+  esc.attach(9);
+  delay(2000);
+  Serial.println("ESC Ready");
+
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+
+  esc.writeMicroseconds(minThrottle);  // safe idle
 }
 
 void loop() {
-  float d = getDistance();
+
+  float distance = getFilteredDistance();
+
   Serial.print("Distance (cm): ");
-  Serial.println(d);
+  Serial.print(distance);
+  Serial.print("   Target Speed: ");
 
-  if (d < 15) {
-    // Too close → slow down
-    esc.writeMicroseconds(slowSpeed);
-    Serial.println("Slow speed");
-    delay(20);
-  } 
-  else {
-    // Far enough → run fast
-    esc.writeMicroseconds(fastSpeed);
-    Serial.println("Fast speed");
-    delay(20);
+  // MULTI-LEVEL SPEED CONTROL
+  if (distance < 15) {
+    esc.writeMicroseconds(slowThrottle);
+    Serial.println("SLOW");
   }
-
+  else if (distance >= 15 && distance < 30) {
+    esc.writeMicroseconds(mediumThrottle);
+    Serial.println("MEDIUM");
+  }
+  else {
+    esc.writeMicroseconds(fastThrottle);
+    Serial.println("FAST");
+  }
   delay(100);
+
+  // Apply smooth ramping toward target speed
+  //rampTo(targetThrottle);
 }
 
-//esc.writeMicroseconds(fastSpeed);
