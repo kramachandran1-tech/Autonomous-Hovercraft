@@ -1,54 +1,83 @@
-  #include <bluefruit.h>
+#include <bluefruit.h>
 
-int setSpeed = 000;
-char msg[32];
+const uint8_t ENC_KEY[] = { 0x4A, 0x91, 0xC3, 0x7E, 0x2D, 0x88, 0xF1, 0x56 };
+#define ENC_KEY_LEN 8
+
+void encryptBuffer(uint8_t* data, uint8_t len, uint8_t keyOffset) {
+  for (uint8_t i = 0; i < len; i++) {
+    data[i] ^= ENC_KEY[(i + keyOffset) % ENC_KEY_LEN];
+  }
+}
+
+#define KEY_COUNT 10
+#define KEY_INTERVAL_MS 2000
+
+const uint8_t rollingKeys[KEY_COUNT] = {
+  0x12, 0x34, 0x56, 0x78, 0x9A,
+  0xBC, 0xDE, 0xF0, 0xA5, 0x5A
+};
+
+uint8_t keyIndex = 0;
+unsigned long lastKeyChange = 0;
+
+int setSpeed = 423;
+char plainMsg[32];
+uint8_t encMsg[32];
+uint8_t msgLen;
+
+void printHex(const uint8_t* data, uint8_t len) {
+  for (uint8_t i = 0; i < len; i++) {
+    if (data[i] < 0x10) Serial.print("0");
+    Serial.print(data[i], HEX);
+    Serial.print(" ");
+  }
+}
+
+void updateRollingKey() {
+  if (millis() - lastKeyChange >= KEY_INTERVAL_MS) {
+    lastKeyChange = millis();
+    keyIndex = (keyIndex + 1) % KEY_COUNT;
+  }
+}
 
 void updateAdvertisement() {
-  // Stop advertising 
   Bluefruit.Advertising.stop();
-
-  // Clear old  data
   Bluefruit.Advertising.clearData();
 
-  // Rebuild the message
-  sprintf(msg, "KREESHA%d", setSpeed);
+  sprintf(plainMsg, "RXHCGCS%d", setSpeed);
+  msgLen = strlen(plainMsg);
 
-  Bluefruit.Advertising.addManufacturerData((uint8_t*)msg, strlen(msg));
+  memcpy(encMsg, plainMsg, msgLen);
 
+  encryptBuffer(encMsg, msgLen, rollingKeys[keyIndex]);
+
+  Bluefruit.Advertising.addManufacturerData(encMsg, msgLen);
   Bluefruit.Advertising.start();
+
+  Serial.print("Plaintext: ");
+  Serial.println(plainMsg);
+
+  Serial.print("Encrypted: ");
+  printHex(encMsg, msgLen);
+  Serial.println();
+  Serial.println("-------------------------");
 }
+
+/* ================= SETUP / LOOP ================= */
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial) {}
-
   Bluefruit.begin();
   Bluefruit.setName("CPB-TX");
 
+  lastKeyChange = millis();
   updateAdvertisement();
 
-  Serial.println("Advertising started.");
+  Serial.println("Encrypted beacon started");
 }
 
 void loop() {
-
-  delay(1000);
-
-  setSpeed = 100;   
-
-  Serial.print("Updating speed to: ");
-  Serial.println(setSpeed);
-
-  updateAdvertisement();   
-
-  delay(1000);
-
-  setSpeed = 350;  
-
-  Serial.print("Updating speed to: ");
-  Serial.println(setSpeed);
-
-  updateAdvertisement();   
-
-
+  updateRollingKey();
+  updateAdvertisement();
+  delay(100);
 }
