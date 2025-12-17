@@ -1,5 +1,7 @@
 #include <bluefruit.h>
 
+/* ================= ENCRYPTION ================= */
+
 const uint8_t ENC_KEY[] = { 0x4A, 0x91, 0xC3, 0x7E, 0x2D, 0x88, 0xF1, 0x56 };
 #define ENC_KEY_LEN 8
 
@@ -8,6 +10,8 @@ void encryptBuffer(uint8_t* data, uint8_t len, uint8_t keyOffset) {
     data[i] ^= ENC_KEY[(i + keyOffset) % ENC_KEY_LEN];
   }
 }
+
+/* ================= ROLLING KEYS ================= */
 
 #define KEY_COUNT 10
 #define KEY_INTERVAL_MS 2000
@@ -20,18 +24,14 @@ const uint8_t rollingKeys[KEY_COUNT] = {
 uint8_t keyIndex = 0;
 unsigned long lastKeyChange = 0;
 
-int setSpeed = 423;
-char plainMsg[32];
-uint8_t encMsg[32];
+/* ================= PAYLOAD ================= */
+
+int setSpeed = 1500;     // <-- CHANGE THIS VALUE
+char plainMsg[16];
+uint8_t encMsg[16];
 uint8_t msgLen;
 
-void printHex(const uint8_t* data, uint8_t len) {
-  for (uint8_t i = 0; i < len; i++) {
-    if (data[i] < 0x10) Serial.print("0");
-    Serial.print(data[i], HEX);
-    Serial.print(" ");
-  }
-}
+/* ================= FUNCTIONS ================= */
 
 void updateRollingKey() {
   if (millis() - lastKeyChange >= KEY_INTERVAL_MS) {
@@ -44,40 +44,36 @@ void updateAdvertisement() {
   Bluefruit.Advertising.stop();
   Bluefruit.Advertising.clearData();
 
+  // Format expected by receiver: RXHCGCS1500
   sprintf(plainMsg, "RXHCGCS%d", setSpeed);
   msgLen = strlen(plainMsg);
 
   memcpy(encMsg, plainMsg, msgLen);
-
   encryptBuffer(encMsg, msgLen, rollingKeys[keyIndex]);
 
   Bluefruit.Advertising.addManufacturerData(encMsg, msgLen);
   Bluefruit.Advertising.start();
-
-  Serial.print("Plaintext: ");
-  Serial.println(plainMsg);
-
-  Serial.print("Encrypted: ");
-  printHex(encMsg, msgLen);
-  Serial.println();
-  Serial.println("-------------------------");
 }
 
-/* ================= SETUP / LOOP ================= */
+/* ================= SETUP ================= */
 
 void setup() {
-  Serial.begin(115200);
   Bluefruit.begin();
   Bluefruit.setName("CPB-TX");
 
   lastKeyChange = millis();
   updateAdvertisement();
-
-  Serial.println("Encrypted beacon started");
 }
+
+/* ================= LOOP ================= */
 
 void loop() {
   updateRollingKey();
   updateAdvertisement();
-  delay(100);
+
+
+  setSpeed += 10;
+  if (setSpeed > 1800) setSpeed = 1500;
+
+  delay(100);  // 10 Hz beacon
 }
