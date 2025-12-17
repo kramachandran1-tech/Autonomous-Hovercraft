@@ -26,10 +26,20 @@ unsigned long lastKeyChange = 0;
 
 /* ================= PAYLOAD ================= */
 
-int setSpeed = 1500;     // <-- CHANGE THIS VALUE
+int setSpeed = 1500;
 char plainMsg[16];
 uint8_t encMsg[16];
 uint8_t msgLen;
+
+/* ================= MODES ================= */
+
+enum TxMode {
+  MODE_IDLE,
+  MODE_STOP,
+  MODE_RAMP
+};
+
+TxMode currentMode = MODE_IDLE;
 
 /* ================= FUNCTIONS ================= */
 
@@ -40,19 +50,18 @@ void updateRollingKey() {
   }
 }
 
-void updateAdvertisement() {
+void sendAdvertisement() {
   Bluefruit.Advertising.stop();
   Bluefruit.Advertising.clearData();
 
-  // Format expected by receiver: RXHCGCS1500
-  sprintf(plainMsg, "RXHCGCS%d", setSpeed);
+  sprintf(plainMsg, "RXHCGCS%04d", setSpeed);
   msgLen = strlen(plainMsg);
 
   memcpy(encMsg, plainMsg, msgLen);
   encryptBuffer(encMsg, msgLen, rollingKeys[keyIndex]);
 
   Bluefruit.Advertising.addManufacturerData(encMsg, msgLen);
-  Bluefruit.Advertising.start();
+  Bluefruit.Advertising.start(1);
 }
 
 /* ================= SETUP ================= */
@@ -61,19 +70,53 @@ void setup() {
   Bluefruit.begin();
   Bluefruit.setName("CPB-TX");
 
+  pinMode(PIN_BUTTON1, INPUT_PULLDOWN); // Button A
+  pinMode(PIN_BUTTON2, INPUT_PULLDOWN); // Button B
+
   lastKeyChange = millis();
-  updateAdvertisement();
 }
 
 /* ================= LOOP ================= */
 
 void loop() {
   updateRollingKey();
-  updateAdvertisement();
 
+  static bool lastA = false;
+  static bool lastB = false;
 
-  setSpeed += 10;
-  if (setSpeed > 1800) setSpeed = 1500;
+  bool aPressed = digitalRead(PIN_BUTTON1);
+  bool bPressed = digitalRead(PIN_BUTTON2);
 
-  delay(100);  // 10 Hz beacon
+  /* ---- Button A: toggle STOP / IDLE ---- */
+  if (aPressed && !lastA) {
+    if (currentMode == MODE_STOP) {
+      currentMode = MODE_IDLE;
+      Bluefruit.Advertising.stop();
+    } else {
+      currentMode = MODE_STOP;
+      setSpeed = 0000;
+      sendAdvertisement();
+    }
+  }
+
+  /* ---- Button B: start ramp ---- */
+  if (bPressed && !lastB) {
+    currentMode = MODE_RAMP;
+    setSpeed = 1500;
+  }
+
+  lastA = aPressed;
+  lastB = bPressed;
+
+  /* ---- Ramp behavior ---- */
+  if (currentMode == MODE_RAMP) {
+    sendAdvertisement();
+
+    setSpeed += 10;
+    if (setSpeed > 1800) {
+      setSpeed = 1500;
+    }
+
+    delay(100); // 10 Hz
+  }
 }
