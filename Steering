@@ -1,0 +1,105 @@
+#include <TinyGPS++.h>
+
+// Set your destination coordinates here (e.g., London, UK)
+static const double DEST_LAT = 51.5074;
+static const double DEST_LNG = -0.1278;
+
+static const uint32_t GPSBaud = 9600; // Check your GPS module's baud rate
+
+TinyGPSPlus gps; // The TinyGPS++ object
+
+double previousCourse = NAN;
+double Turning_angle = 0;
+
+void setup() {
+  Serial.begin(115200);    // USB serial (monitor)
+  Serial1.begin(GPSBaud);  // GPS on hardware UART1
+
+  Serial.println(F("GPS Destination Calculator Started (Arduino Mega)"));
+}
+
+void loop() {
+ // Feed GPS data into TinyGPS++
+ while (Serial1.available() > 0) {
+  gps.encode(Serial1.read());
+ }
+
+ // Warn if no GPS data received
+ if (millis() > 5000 && gps.charsProcessed() < 10) {
+  Serial.println(F("No GPS data received: check wiring"));
+ }
+
+ // Display GPS info when updated
+ if (gps.location.isUpdated()) {
+  displayInfo();
+ }
+ if(Turning_angle>0){
+  FS90.write(30);
+ }
+ if(Turning_angle<0){
+  FS90.write(150);
+ }
+ if(Turning_angle=0){
+  FS90.write(90);
+ }
+}
+
+void displayInfo() {
+  double currentCourse = gps.course.deg();
+
+  if (isnan(previousCourse)) {
+    previousCourse = currentCourse;
+    return;
+  }
+
+  
+  
+
+  if (gps.location.isValid()) {
+    double currentLat = gps.location.lat();
+    double currentLng = gps.location.lng();
+
+    double distanceToDestination = TinyGPSPlus::distanceBetween(
+      currentLat, currentLng, DEST_LAT, DEST_LNG);
+
+    double courseToDestination = TinyGPSPlus::courseTo(
+      currentLat, currentLng, DEST_LAT, DEST_LNG);
+    
+    
+    double turn_angle=courseToDestination-currentCourse;
+    if(turn_angle>-180 && turn_angle<180){
+      Turning_angle=turn_angle;
+    }
+    if(turn_angle>180){
+      Turning_angle=turn_angle-360;
+    }
+    if(turn_angle<-180){
+      Turning_angle=turn_angle+360;
+    }
+  
+
+    const char* cardinalDirection =
+      TinyGPSPlus::cardinal(courseToDestination);
+
+    Serial.println(F("-------------------------------------"));
+    Serial.print(F("Current Location: "));
+    Serial.print(currentLat, 6);
+    Serial.print(F(", "));
+    Serial.println(currentLng, 6);
+
+    Serial.print(F("Distance to Destination: "));
+    Serial.print(distanceToDestination);
+    Serial.println(F(" meters"));
+
+    Serial.print(F("Course to Destination: "));
+    Serial.print(courseToDestination, 2);
+    Serial.print(F("° ("));
+    Serial.print(cardinalDirection);
+    Serial.println(F(")"));
+
+    Serial.print(F("Turning angle required:  "));
+    Serial.print(Turning_angle);
+  } else {
+    Serial.println(F("Waiting for valid GPS fix..."));
+  }
+}
