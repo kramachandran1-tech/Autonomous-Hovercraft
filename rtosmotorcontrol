@@ -1,0 +1,148 @@
+#include <Arduino_FreeRTOS.h>
+#include <Servo.h>
+#include <SoftwareSerial.h>
+
+/* ================= HARDWARE ================= */
+
+#define ESC_PIN 10
+
+#define BLE_RX 8
+#define BLE_TX 9
+
+#define TRIG_PIN 6
+#define ECHO_PIN 7
+
+/* ================= BLE ================= */
+
+SoftwareSerial bleSerial(BLE_RX, BLE_TX);
+volatile int bleSpeed = -1;      // -1 = no override
+volatile bool bleActive = false;
+
+/* ================= ESC ================= */
+
+Servo esc;
+
+const int minThrottle    = 1500;
+const int slowThrottle   = 1600;
+const int mediumThrottle = 1700;
+const int fastThrottle   = 1800;
+
+/* ================= ULTRASONIC ================= */
+
+float getFilteredDistance() {
+  long total = 0;
+  const int samples = 5;
+
+  for (int i = 0; i < samples; i++) {
+    digitalWrite(TRIG_PIN, LOW);
+    delayMicroseconds(2);
+    digitalWrite(TRIG_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(TRIG_PIN, LOW);
+
+    long duration = pulseIn(ECHO_PIN, HIGH, 25000);
+    float d = duration * 0.034 / 2;
+
+    total += d * 10;
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+  }
+
+  return (total / samples) / 10.0;
+}
+
+/* ================= TASK: BLE RECEIVER (HIGH PRIORITY) ================= */
+
+void TaskBLE(void *pvParameters) {
+  (void) pvParameters;
+
+  for (;;) {
+    if (bleSerial.available()) {
+      int value = bleSerial.parseInt();
+
+      bleSpeed = value;
+      bleActive = true;
+
+      Serial.print("BLE override speed: ");
+      Serial.println(bleSpeed);
+    }
+
+    vTaskDelay(5 / portTICK_PERIOD_MS);
+  }
+}
+
+/* ================= TASK: ULTRASONIC CONTROL (LOW PRIORITY) ================= */
+
+void TaskUltrasonic(void *pvParameters) {
+  (void) pvParameters;
+
+  for (;;) {
+    if (!bleActive) {
+      float distance = getFilteredDistance();
+
+      Serial.print("Distance: ");
+      Serial.print(distance);
+      Serial.print(" cm  ");
+
+      if (distance < 15) {
+        esc.writeMicroseconds(slowThrottle);
+        Serial.println("SLOW");
+      }
+      else if (distance < 30) {
+        esc.writeMicroseconds(mediumThrottle);
+        Serial.println("MEDIUM");
+      }
+      else {
+        esc.writeMicroseconds(fastThrottle);
+        Serial.println("FAST");
+      }
+    }
+
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+  }
+}
+
+/* ================= TASK: ESC OUTPUT (MEDIUM PRIORITY) ================= */
+
+void TaskESC(void *pvParameters) {
+  (void) pvParameters;
+
+  for (;;) {
+    if (bleActive) {
+      if (bleSpeed <= 0) {
+        esc.writeMicroseconds(minThrottle);
+      } else {
+        esc.writeMicroseconds(constrain(bleSpeed, minThrottle, fastThrottle));
+      }
+    }
+
+    vTaskDelay(20 / portTICK_PERIOD_MS);
+  }
+}
+
+/* ================= SETUP ================= */
+
+void setup() {
+  Serial.begin(115200);
+  bleSerial.begin(9600);
+
+  esc.attach(ESC_PIN);
+  esc.writeMicroseconds(minThrottle);
+  delay(2000);
+
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  Serial.println("System Ready");
+
+  /* ---- Create Tasks ---- */
+
+  xTaskCreate( TaskBLE, "BLE",   128, NULL, 3,  NULL );
+
+  xTaskCreate( TaskESC,    "ESC",    128,    NULL,    2,   NULL );
+
+  xTaskCreate(   TaskUltrasonic, "Ultrasonic",   256,  NULL,    1,            NULL  );
+}
+
+void loop() {
+  // Empty
+}
