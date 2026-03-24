@@ -1,0 +1,131 @@
+#include <SoftwareSerial.h>
+
+
+
+SoftwareSerial HC12(2, 3); 
+
+/* ================= Status ================= */
+int On=1;
+int Off=0;
+
+
+/* ================= BUtton Control ================= */
+const int button1 = 6;
+const int button2 = 5;
+bool state1 = false;
+bool state2 = false;
+bool lastButton1State = HIGH;
+bool lastButton2State = HIGH;
+
+
+
+/* ================= TIME ================= */
+unsigned long lastKeyChange = 0;
+
+
+
+/* ================= PAYLOAD ================= */
+int setSpeed = 1500;
+int zeroSpeed = 0;
+char plainMsg[16];
+uint8_t encMsg[16];
+uint8_t msgLen;
+
+
+
+/* ================= MODES ================= */
+enum TxMode {
+  MODE_IDLE,
+  MODE_STOP,
+  MODE_RAMP
+};
+
+TxMode currentMode = MODE_IDLE;
+
+void setup() {
+    pinMode(button1, INPUT_PULLUP); 
+    pinMode(button2, INPUT_PULLUP);
+    
+    Serial.begin(9600);  
+    HC12.begin(9600);    
+
+    lastKeyChange = millis();
+}
+
+/* ================= LOOP ================= */
+
+void loop() {
+
+
+    // Read buttons
+    bool button1State = digitalRead(button1);
+    bool button2State = digitalRead(button2);
+
+    // Toggle Button1
+    if (button1State == LOW && lastButton1State == HIGH) {
+        state1 = !state1;
+        HC12.print("Btn1: ");   //  Remember to change the sequencing in receiver afterwards//
+        HC12.println(state1);
+        Serial.print("Sent Btn1: ");
+        Serial.println(state1);
+        if (currentMode == MODE_STOP) {
+              currentMode = MODE_IDLE;
+              HC12.print("Mode: ");
+              HC12.print(On);
+              HC12.print("Speed: ");   // Remember the sequencing in receiver
+              HC12.println(zeroSpeed);
+              } 
+        else {
+              currentMode = MODE_STOP;
+              setSpeed = 0000;
+              HC12.print("Mode: ");   // Remember the sequencing in receiver
+              HC12.print(Off);
+              HC12.print("Speed: ");   // Remember the sequencing in receiver
+              HC12.println(zeroSpeed);
+              
+              }
+        delay(100);  
+    }
+
+
+    if (button2State == LOW && lastButton2State == HIGH) {
+        state2 = !state2;
+        HC12.print("Btn2: ");
+        HC12.println(state2);
+        Serial.print("Sent Btn2: ");
+        Serial.println(state2);
+        if (currentMode == MODE_IDLE) {
+              currentMode = MODE_RAMP;
+              HC12.print("Mode: ");
+              HC12.print(On);
+              HC12.print("Speed: ");   // Remember the sequencing in receiver
+              HC12.println(setSpeed);
+              setSpeed=1500;
+              } 
+        else {
+              if (currentMode == MODE_RAMP)
+              currentMode = MODE_IDLE;
+              setSpeed = 0000;
+              HC12.print("Mode: ");
+              HC12.print(On);
+              HC12.print("Speed: ");   // Remember the sequencing in receiver
+              HC12.println(zeroSpeed);
+              
+              }
+        delay(100);  
+    }
+
+    lastButton1State = button1State;
+    lastButton2State = button2State;
+}
+
+
+
+
+
+
+
+
+    
+
+  
