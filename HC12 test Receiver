@@ -1,0 +1,96 @@
+#include <SoftwareSerial.h>
+
+SoftwareSerial HC12(2, 3);  
+
+const int led1 = A0;  
+const int led2 = A5; 
+const int led3 = 5;
+
+const int signalLed = 12;
+
+bool state1 = false;
+bool state2 = false;
+int mode;
+int speed;
+
+const unsigned int MAX_MESSAGE_LENGTH = 64;
+char receivedChars[MAX_MESSAGE_LENGTH];
+bool newData = false;
+unsigned long lastReceiveTime = 0; 
+const unsigned long SIGNAL_TIMEOUT = 2000; 
+
+void setup() {
+
+  Serial.begin(9600);
+  HC12.begin(9600);
+  Serial.println("Receiver ready. Waiting for data...");
+
+
+}
+
+void loop() {
+  receiveData();
+  processData();
+  checkSignalStatus();
+}
+
+void receiveData() {
+  static byte ndx = 0;
+  char endMarker = '\n';
+  char rc;
+
+  while (HC12.available() > 0 && !newData) {
+    rc = HC12.read();
+
+    if (rc != endMarker) {
+      if (ndx < MAX_MESSAGE_LENGTH - 1) {
+        receivedChars[ndx++] = rc;
+      }
+    } else {
+      receivedChars[ndx] = '\0';  
+      ndx = 0;
+      newData = true;
+      lastReceiveTime = millis(); 
+    }
+  }
+}
+
+void processData() {
+  if (newData) {
+    Serial.print("Received: ");
+    Serial.println(receivedChars);
+
+
+    
+ if (strncmp(receivedChars, "Mode: ", 6) == 0) {
+      mode = atoi(receivedChars + 6); //Might change to mode=receivedChars[6]//
+      speed = atoi(receivedChars + 13); // Change 13 and 6 depending on the length of MODE or setSpeed//
+      Serial.print("Mode set to: ");
+      Serial.println(mode);
+      Serial.print("Speed set to: ");
+      Serial.println(speed);
+
+    } else if (strncmp(receivedChars, "Btn1: ", 6) == 0) {
+      state1 = atoi(receivedChars + 6);
+      Serial.print("Device set to: ");
+      Serial.println(state1);
+
+    } else if (strncmp(receivedChars, "Btn2: ", 6) == 0) {
+      state2 = atoi(receivedChars + 6);
+      digitalWrite(led2, state2);
+      Serial.print("Mode set to: ");
+      Serial.println(state2);
+    } else {
+      Serial.println("Unknown command");
+    }
+
+
+    newData = false;
+  }
+}
+
+void checkSignalStatus() {
+  if (millis() - lastReceiveTime > SIGNAL_TIMEOUT) {
+    digitalWrite(signalLed, LOW); // Signal lost
+  }
+}
