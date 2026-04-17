@@ -71,10 +71,11 @@ uint16_t readDistance() {
 }
 
 
-// -------------------- LOOP --------------------
+// -------------------- LOOP -------------------------------------
 void loop() {
   Read_Gps();        // always running in background
   parse_GpsDATA();
+  print_GpsDATA();
   
   sweepServo();      // separate function
 }
@@ -154,9 +155,7 @@ void parse_GpsDATA()
         subStringNext = strstr(subString, ",");
         if (!subStringNext) return;
 
-
         int len = subStringNext - subString;
-
 
         switch(i)
         {
@@ -164,37 +163,26 @@ void parse_GpsDATA()
             memcpy(Save_Data.UTCTime, subString, len);
             Save_Data.UTCTime[len] = '\0';
             break;
-
-
           case 2:
             Save_Data.Usefull_Flag = (*subString == 'A');
             break;
-
-
           case 3:
             memcpy(Save_Data.latitude, subString, len);
             Save_Data.latitude[len] = '\0';
             break;
-
-
           case 4:
             memcpy(Save_Data.N_S, subString, 1);
             Save_Data.N_S[1] = '\0';
             break;
-
-
           case 5:
             memcpy(Save_Data.longitude, subString, len);
             Save_Data.longitude[len] = '\0';
             break;
-
-
           case 6:
             memcpy(Save_Data.E_W, subString, 1);
             Save_Data.E_W[1] = '\0';
             break;
         }
-
 
         subString = subStringNext;
         Save_Data.ParseData_Flag = true;
@@ -203,22 +191,18 @@ void parse_GpsDATA()
   }
 }
 
-
+// -------------------- Read GPS Data FUNCTIONS --------------------
 void Read_Gps()
 {
   while (GpsSerial.available())
   {
     gpsRxBuffer[gpsRxLength++] = GpsSerial.read();
-
-
     if (gpsRxLength >= gpsRxBufferLength)
       gpsRxLength = 0;
   }
 
-
   char* head = strstr(gpsRxBuffer, "$GPRMC,");
   if (!head) head = strstr(gpsRxBuffer, "$GNRMC,");
-
 
   if (head)
   {
@@ -228,7 +212,6 @@ void Read_Gps()
       int len = tail - head;
       memcpy(Save_Data.GPS_DATA, head, len);
       Save_Data.GPS_DATA[len] = '\0';
-
 
       Save_Data.GetData_Flag = true;
       gpsRxLength = 0;
