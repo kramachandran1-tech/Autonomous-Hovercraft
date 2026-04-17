@@ -1,0 +1,214 @@
+#include <Servo.h>
+#include <TinyGPS++.h>
+#include <Wire.h>
+
+/* object */ 
+Servo rudder;
+TinyGPSPlus gps;
+ 
+#define SERVO_PIN 9 /* servro control*/
+#define MOTOR_PIN 10 /* back motor not bottom*/
+
+#define RC_STEER_PIN 2 
+#define RC_THROTTLE_PIN 3
+
+/* TARGET */
+double targetLat = number here ;
+double targetLon = number here;
+ 
+double currentLat = current num ;
+double currentLon = current num;
+float heading = 0; /*direction*/
+
+bool rcMode = false; /*determines if human or automatic control */
+
+/* PID */
+float Kp = 1.2;
+float Ki = 0.0;
+float Kd = 0.4;
+
+float integral = 0;
+float previousError = 0;
+unsigned long lastTime = 0;
+
+/* filter kalman style gives best estimate of actual value */
+float kAngle = 0;
+float kUncertainty = 2; /*this value need calibration before pid*/
+
+float processNoise = 0.05;
+float measurementNoise = 2;
+
+/* main code initialisation*/
+void setup() {
+  Serial.begin(9600);
+  Serial1.begin(9600); /*change if needed*/ 
+
+  Wire.begin(); /*starts compas*/
+
+  pinMode(RC_STEER_PIN, INPUT);
+  pinMode(RC_THROTTLE_PIN, INPUT); /* connecting RC to pins as inputs */
+
+  rudder.attach(SERVO_PIN);
+  pinMode(MOTOR_PIN, OUTPUT); /*conects motor and servo to pins*/
+
+  lastTime = millis(); /* pid time initialisation */
+}
+
+ 
+void loop() {
+
+  readGPS();
+  heading = readCompass();
+
+  checkRCOverride();
+
+  if (rcMode) {
+    manual();
+  } else {
+    autonomous();
+  }
+}
+
+ /* checks for RC */
+void checkRC() {
+  int pulse = pulseIn(RC_STEER_PIN, HIGH, 25000);
+
+  if (pulse > 1000 && pulse < 2000) {
+    rcMode = true;
+  } else {
+    rcMode = false;
+  }
+}
+
+/* manual control */
+void manual() {
+  int steer = pulseIn(RC_STEER_PIN, HIGH, 25000);
+  int throttle = pulseIn(RC_THROTTLE_PIN, HIGH, 25000);
+
+  int angle = map(steer, 1000, 2000, 0, 180);
+  int speed = map(throttle, 1000, 2000, 0, 255);
+
+  rudder.write(angle);
+  analogWrite(MOTOR_PIN, speed);
+}
+
+
+void autonomous() {
+
+  double distanceToTarget = TinyGPSPlus::distanceBetween(
+    currentLat, currentLon,
+    targetLat, targetLon
+  );
+
+  double targetBearing = TinyGPSPlus::courseTo(
+    currentLat, currentLon,
+    targetLat, targetLon
+  );
+
+  
+  float smoothHeading = updateKalman(heading);
+
+  float error = targetBearing - smoothHeading;
+
+  // Normalize error
+  if (error > 180) error -= 360;
+  if (error < -180) error += 360;
+
+
+  float pidOutput = computePID(error);
+
+  int servoAngle = 90 + pidOutput;
+  servoAngle = constrain(servoAngle, 60, 120);
+
+  int baseSpeed = 180;
+  int speed = baseSpeed - abs(pidOutput) * 0.8;
+
+
+  int distanceAhead = readLidar();
+
+  if (distanceAhead < 100) {
+    servoAngle += 30;
+    speed = 120;
+  }
+
+  speed = constrain(speed, 100, 255);
+
+  rudder.write(servoAngle);
+  analogWrite(MOTOR_PIN, speed);
+
+/*stop at goal*/
+  if (distanceToTarget < 3) {
+    analogWrite(MOTOR_PIN, 0);
+  }
+}
+
+float computePID(float error) {
+  unsigned long now = millis();
+  float dt = (now - lastTime) / 1000.0;
+
+  if (dt <= 0) dt = 0.01;
+
+  lastTime = now;
+
+  integral += error * dt;
+  float derivative = (error - previousError) / dt;
+
+  float output = Kp * error + Ki * integral + Kd * derivative;
+
+  previousError = error;
+
+  return output;
+}
+
+
+float updateKalman(float measurement) {
+
+  kUncertainty += processNoise;
+
+  float K = kUncertainty / (kUncertainty + measurementNoise);
+
+  kAngle = kAngle + K * (measurement - kAngle);
+
+  kUncertainty = (1 - K) * kUncertainty;
+
+  return kAngle;
+}
+
+
+void readGPS() {
+  while (Serial1.available()) {
+    gps.encode(Serial1.read());
+  }
+
+  if (gps.location.isValid()) {
+    currentLat = gps.location.lat();
+    currentLon = gps.location.lng();
+  }
+}
+
+float readCompass() {
+  Wire.beginTransmission(0x1E);
+  Wire.write(0x03);
+  Wire.endTransmission();
+
+  Wire.requestFrom(0x1E, 6);
+
+  if (6 <= Wire.available()) {
+    int16_t x = Wire.read() << 8 | Wire.read();
+    int16_t z = Wire.read() << 8 | Wire.read();
+    int16_t y = Wire.read() << 8 | Wire.read();
+
+    float heading = atan2(y, x);
+
+    if (heading < 0) heading += 2 * PI;
+
+    return heading * 180 / PI;
+  }
+
+  return 0;
+}
+
+
+int readLidar() {
+  /* put lidar code here*/
+}
