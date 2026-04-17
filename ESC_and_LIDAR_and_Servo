@@ -1,0 +1,82 @@
+#include <Servo.h>
+#include <Wire.h>
+#include <SoftwareSerial.h>
+
+// -------------------- LIDAR --------------------
+#define LIDAR_ADDR 0x10  
+
+// -------------------- SERVO --------------------
+Servo miniServo;
+Servo ESC;     // create servo object to control the ESC
+
+// -------------------- GPS ----------------------
+//SoftwareSerial GpsSerial(14, 15);  // RX, TX
+
+// -------------------- SETUP --------------------
+void setup() {
+  miniServo.attach(9);
+  ESC.attach(9); // (pin, min pulse width, max pulse width in microseconds) 
+  Serial.begin(115200);
+
+
+  Wire.begin();
+  Serial.println("TF-Luna I2C test");
+}
+
+// -------------------- LIDAR READ --------------------
+uint16_t readDistance() {
+  Wire.beginTransmission(LIDAR_ADDR);
+  Wire.write(0x00);
+  Wire.endTransmission();
+
+  Wire.requestFrom(LIDAR_ADDR, 2);
+
+  if (Wire.available() >= 2) {
+    uint16_t dist = Wire.read();
+    dist |= Wire.read() << 8;
+    return dist;
+  }
+  return 0xFFFF;
+}
+
+
+// -------------------- LOOP --------------------
+void loop() {
+
+  sweep();      // separate function
+
+}
+
+void controlESC(uint16_t dist) {
+  if (dist < 20) {
+    ESC.write(1000);  // stop motor (adjust if your ESC uses a different stop value)
+  } else {
+    ESC.write(1100); // or whatever your normal throttle value is
+  }
+}
+
+void sweep() {
+  static int pos = 0;
+  static int dir = 1;
+  static unsigned long lastMove = 0;
+
+  if (millis() - lastMove >= 100) {
+    lastMove = millis();
+
+    myServo.write(pos);
+    pos += dir;
+
+    if (pos >= 180 || pos <= 0) dir *= -1;
+
+    uint16_t dist = readDistance();
+
+    controlESC(dist);  // <-- add this line
+
+  
+    Serial.print("Angle: ");
+    Serial.print(pos);
+    Serial.print(" Distance: ");
+    Serial.println(dist);
+
+  }
+}
