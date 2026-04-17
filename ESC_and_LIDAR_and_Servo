@@ -15,9 +15,10 @@ Servo ESC;     // create servo object to control the ESC
 // -------------------- SETUP --------------------
 void setup() {
   miniServo.attach(9);
-  ESC.attach(9); // (pin, min pulse width, max pulse width in microseconds) 
-  Serial.begin(115200);
+ESC.attach(8, 1000, 2000);  Serial.begin(115200);
 
+ESC.writeMicroseconds(1000);
+delay(3000);  // allow ESC to arm
 
   Wire.begin();
   Serial.println("TF-Luna I2C test");
@@ -49,9 +50,9 @@ void loop() {
 
 void controlESC(uint16_t dist) {
   if (dist < 20) {
-    ESC.write(1000);  // stop motor (adjust if your ESC uses a different stop value)
+    ESC.write(0);  // stop motor (adjust if your ESC uses a different stop value)
   } else {
-    ESC.write(1100); // or whatever your normal throttle value is
+    ESC.write(30); // or whatever your normal throttle value is
   }
 }
 
@@ -63,7 +64,7 @@ void sweep() {
   if (millis() - lastMove >= 100) {
     lastMove = millis();
 
-    myServo.write(pos);
+    miniServo.write(pos);
     pos += dir;
 
     if (pos >= 180 || pos <= 0) dir *= -1;
