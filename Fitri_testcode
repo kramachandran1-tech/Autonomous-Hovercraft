@@ -1,0 +1,227 @@
+#include <Servo.h>
+#include <Wire.h>
+
+
+// -------------------- LIDAR --------------------
+#define LIDAR_ADDR 0x10  
+// -------------------- SERVO --------------------
+Servo miniServo;
+// -------------------- ESC --------------------
+Servo ESC;
+// -------------------- GPS ----------------------
+// SoftwareSerial is REMOVED. We are now using the Mega's hardware Serial1.
+
+struct
+{
+  char GPS_DATA[80]; 
+  bool GetData_Flag;   // Get GPS data flag bit
+  bool ParseData_Flag; // Parse completed flag bit 
+  char UTCTime[11];    // UTC time
+  char latitude[11];   // Latitude
+  char N_S[2];         // N/S
+  char longitude[12];  // Longitude
+  char E_W[2];         // E/W
+  bool Usefull_Flag;   // If the position information is valid flag bit
+} Save_Data;
+
+// GPS buffer
+const unsigned int gpsRxBufferLength = 600;
+char gpsRxBuffer[gpsRxBufferLength];
+unsigned int gpsRxLength = 0;
+
+// -------------------- SETUP --------------------
+void setup() {
+  miniServo.attach(9); // Servo setup
+  ESC.attach(8, 1000, 2000);
+  ESC.writeMicroseconds(1000); delay(2000);
+
+  // Serial 0 (Pins 0 & 1) - To Computer/Serial Monitor
+  Serial.begin(115200);
+
+  Wire.begin(); // Lidar sensor setup
+  Serial.println("TF-Luna I2C test"); 
+
+  // Serial 1 (Pins 18 & 19) - To GPS Module
+  Serial1.begin(9600); 
+  Serial.println("GPS Initialising...");
+  Serial.println("Waiting");
+
+  Save_Data.GetData_Flag = false;
+  Save_Data.ParseData_Flag = false;
+  Save_Data.Usefull_Flag = false;
+}
+
+// -------------------- LIDAR READ --------------------
+uint16_t readDistance() {
+  Wire.beginTransmission(LIDAR_ADDR);
+  Wire.write(0x00);
+  Wire.endTransmission();
+
+  Wire.requestFrom(LIDAR_ADDR, 2);
+
+  if (Wire.available() >= 2) {
+    uint16_t dist = Wire.read();
+    dist |= Wire.read() << 8;
+    return dist;
+  }
+  return 0xFFFF;
+}
+
+// -------------------- LOOP -------------------------------------
+void loop() {
+  Read_Gps();        // always running in background
+  parse_GpsDATA();
+  print_GpsDATA();
+  
+  sweepServo();      // separate function
+}
+
+void controlESC(uint16_t dist) {
+  if (dist < 20) {
+    ESC.writeMicroseconds(1000);  // stop motor (adjust if your ESC uses a different stop value)
+  } else {
+    ESC.writeMicroseconds(1100); // or whatever your normal throttle value is
+  }
+}
+
+// -------------------- Sweep Servo FUNCTIONS --------------------
+void sweepServo() {
+  static int pos = 0;
+  static int dir = 1;
+  static unsigned long lastMove = 0;
+
+  if (millis() - lastMove >= 50) {
+    lastMove = millis();
+
+    miniServo.write(pos);
+    pos += dir;
+
+    if (pos >= 180 || pos <= 0) dir *= -1;
+
+    uint16_t dist = readDistance();
+
+    controlESC(dist);
+
+    Serial.print("Angle: ");
+    Serial.print(pos);
+    Serial.print(" Distance: ");
+    Serial.println(dist);
+  }
+}
+
+// -------------------- Print GPS Data FUNCTIONS --------------------
+void print_GpsDATA()
+{
+  if (Save_Data.ParseData_Flag)
+  {
+    Save_Data.ParseData_Flag = false;
+
+    Serial.print("UTC: ");
+    Serial.println(Save_Data.UTCTime);
+
+    if (Save_Data.Usefull_Flag)
+    {
+      Save_Data.Usefull_Flag = false;
+      Serial.print("Save_Data.latitude = ");
+      Serial.println(Save_Data.latitude);
+      Serial.print("Save_Data.N_S = ");
+      Serial.println(Save_Data.N_S);
+      Serial.print("Save_Data.longitude = ");
+      Serial.println(Save_Data.longitude);
+      Serial.print("Save_Data.E_W = ");
+      Serial.println(Save_Data.E_W);
+    }
+    else
+    {
+      Serial.println("GPS not valid");
+    }
+  }
+}
+
+// -------------------- Parse GPS Data FUNCTIONS --------------------
+void parse_GpsDATA()
+{
+  char *subString;
+  char *subStringNext;
+
+  if (Save_Data.GetData_Flag)
+  {
+    Save_Data.GetData_Flag = false;
+    for (int i = 0; i <= 6; i++)
+    {
+      if (i == 0)
+      {
+        subString = strstr(Save_Data.GPS_DATA, ",");
+        if (!subString) return;
+      }
+      else
+      {
+        subString++;
+        subStringNext = strstr(subString, ",");
+        if (!subStringNext) return;
+
+        int len = subStringNext - subString;
+
+        switch(i)
+        {
+          case 1:
+            memcpy(Save_Data.UTCTime, subString, len);
+            Save_Data.UTCTime[len] = '\0';
+            break;
+          case 2:
+            Save_Data.Usefull_Flag = (*subString == 'A');
+            break;
+          case 3:
+            memcpy(Save_Data.latitude, subString, len);
+            Save_Data.latitude[len] = '\0';
+            break;
+          case 4:
+            memcpy(Save_Data.N_S, subString, 1);
+            Save_Data.N_S[1] = '\0';
+            break;
+          case 5:
+            memcpy(Save_Data.longitude, subString, len);
+            Save_Data.longitude[len] = '\0';
+            break;
+          case 6:
+            memcpy(Save_Data.E_W, subString, 1);
+            Save_Data.E_W[1] = '\0';
+            break;
+        }
+
+        subString = subStringNext;
+        Save_Data.ParseData_Flag = true;
+      }
+    }
+  }
+}
+
+// -------------------- Read GPS Data FUNCTIONS --------------------
+void Read_Gps()
+{
+  // Changed GpsSerial to Serial1
+  while (Serial1.available())
+  {
+    gpsRxBuffer[gpsRxLength++] = Serial1.read();
+    if (gpsRxLength >= gpsRxBufferLength - 1)
+      gpsRxLength = 0;
+  }
+  gpsRxBuffer[gpsRxLength] = '\0';
+
+  char* head = strstr(gpsRxBuffer, "$GPRMC,");
+  if (!head) head = strstr(gpsRxBuffer, "$GNRMC,");
+
+  if (head)
+  {
+    char* tail = strstr(head, "\r\n");
+    if (tail && tail > head)
+    {
+      int len = tail - head;
+      memcpy(Save_Data.GPS_DATA, head, len);
+      Save_Data.GPS_DATA[len] = '\0';
+
+      Save_Data.GetData_Flag = true;
+      gpsRxLength = 0;
+    }
+  }
+}
