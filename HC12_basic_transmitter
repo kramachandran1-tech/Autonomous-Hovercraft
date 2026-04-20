@@ -1,0 +1,21 @@
+#include <SoftwareSerial.h>
+SoftwareSerial HC12(2, 3); 
+
+char plainMsg[16];
+
+void setup() {
+
+    Serial.begin(9600);  
+    HC12.begin(9600);    
+	Serial.println("HC-12 Trans Ready");
+}
+
+void loop() {
+
+  HC12.print("Sending... ");  
+  
+  Serial.print("Sending... ");
+  
+  delay(100);  
+  
+}
