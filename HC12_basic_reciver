@@ -1,0 +1,17 @@
+#include <SoftwareSerial.h>
+
+SoftwareSerial HC12(2, 3); 
+
+void setup() {
+  Serial.begin(9600);   
+  HC12.begin(9600);     
+
+  Serial.println("HC-12 Receiver Ready");
+}
+
+void loop() {
+  while (HC12.available()) {
+    char c = HC12.read();   // read one character
+    Serial.write(c);        // print it to Serial Monitor
+  }
+}
