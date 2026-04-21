@@ -41,10 +41,12 @@ unsigned int gpsRxLength = 0;
 void setup() {
   miniServo.attach(9); // Servo setup
   ESC1.attach(8, 1000, 2000);
-  ESC2.attach(7, 1000, 2000);
+  ESC2.attach(10, 1000, 2000);
   ESC1.writeMicroseconds(1000); 
   ESC2.writeMicroseconds(1000); 
   delay(2000);
+
+  ESC2.writeMicroseconds(lift_speed); 
 
   // Serial 0 (Pins 0 & 1) - To Computer/Serial Monitor
   Serial.begin(115200);
@@ -80,7 +82,7 @@ uint16_t readDistance() {
 
 // -------------------- LOOP -------------------------------------
 void loop() {
-  liftmotorspeed();
+  //liftmotorspeed();
   Read_Gps();        // always running in background
   parse_GpsDATA();
   print_GpsDATA();
@@ -90,11 +92,11 @@ void loop() {
 
 void liftmotorspeed()
 {
-  Serial.print("Lift motor speed =  ");
-  Serial.print(lifts_speed);
-  ESC.writeMicroseconds(lifts_speed); 
+  Serial.print("Lift motor speed = ");
+  Serial.print(lift_speed);
+  ESC2.writeMicroseconds(lift_speed); 
+  delay(100);
 }
-
 void Error_Flag(int num)
 {
   Serial.print("ERROR");
@@ -110,9 +112,9 @@ void Error_Flag(int num)
 
 void controlESC(uint16_t dist) {
   if (dist < 20) {
-    ESC.writeMicroseconds(1000);  // stop motor (adjust if your ESC uses a different stop value)
+    ESC1.writeMicroseconds(1000);  // stop motor (adjust if your ESC uses a different stop value)
   } else {
-    ESC.writeMicroseconds(1000); // or whatever your normal throttle value is
+    ESC1.writeMicroseconds(1050); // or whatever your normal throttle value is
   }
 }
 
