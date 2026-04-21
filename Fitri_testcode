@@ -7,7 +7,15 @@
 // -------------------- SERVO --------------------
 Servo miniServo;
 // -------------------- ESC --------------------
-Servo ESC;
+Servo ESC1;
+Servo ESC2;
+
+// ESC throttle values
+const int lift_speed = 1100; // adjust for your motor/ESC (could be change depend on the ESC)
+//const int slowSpeed = 1600;   // adjust for your motor/ESC (could be change depend on the ESC)
+//const int minSpeed = 1800;   // adjust for your motor/ESC (could be change depend on the ESC)
+//const int fastSpeed = 2000; // adjust for your motor/ESC (could be change depend on the ESC)
+
 // -------------------- GPS ----------------------
 // SoftwareSerial is REMOVED. We are now using the Mega's hardware Serial1.
 
@@ -32,8 +40,11 @@ unsigned int gpsRxLength = 0;
 // -------------------- SETUP --------------------
 void setup() {
   miniServo.attach(9); // Servo setup
-  ESC.attach(8, 1000, 2000);
-  ESC.writeMicroseconds(1000); delay(2000);
+  ESC1.attach(8, 1000, 2000);
+  ESC2.attach(7, 1000, 2000);
+  ESC1.writeMicroseconds(1000); 
+  ESC2.writeMicroseconds(1000); 
+  delay(2000);
 
   // Serial 0 (Pins 0 & 1) - To Computer/Serial Monitor
   Serial.begin(115200);
@@ -69,11 +80,19 @@ uint16_t readDistance() {
 
 // -------------------- LOOP -------------------------------------
 void loop() {
+  liftmotorspeed();
   Read_Gps();        // always running in background
   parse_GpsDATA();
   print_GpsDATA();
   
   sweepServo();      // separate function
+}
+
+void liftmotorspeed()
+{
+  Serial.print("Lift motor speed =  ");
+  Serial.print(lifts_speed);
+  ESC.writeMicroseconds(lifts_speed); 
 }
 
 void Error_Flag(int num)
