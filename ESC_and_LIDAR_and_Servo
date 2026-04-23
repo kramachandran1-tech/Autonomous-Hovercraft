@@ -64,7 +64,7 @@ void sweep() {
   if (millis() - lastMove >= 100) {
     lastMove = millis();
 
-    miniServo.write(pos);
+    //miniServo.write(pos);
     pos += dir;
 
     if (pos >= 180 || pos <= 0) dir *= -1;
