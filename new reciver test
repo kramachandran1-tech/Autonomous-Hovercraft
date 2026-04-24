@@ -1,0 +1,31 @@
+#include <SoftwareSerial.h>
+
+// RX, TX (Arduino perspective)
+SoftwareSerial HC12(10, 11);
+
+String incomingData = "";
+
+void setup() {
+  Serial.begin(115200);   // PC monitor
+  HC12.begin(9600);       // HC-12 baud rate
+
+  Serial.println("HC-12 Receiver Ready");
+}
+
+void loop() {
+  while (HC12.available()) {
+    char c = HC12.read();
+
+    // Build full message
+    incomingData += c;
+
+    // Optional: detect end of message
+    if (c == '\n' || incomingData.length() > 100) {
+      Serial.print("Received: ");
+      Serial.println(incomingData);
+
+      // Reset buffer
+      incomingData = "";
+    }
+  }
+}
