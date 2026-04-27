@@ -1,0 +1,338 @@
+#include <Servo.h>
+#include <Wire.h>
+
+Servo rudder;
+
+#define SERVO_PIN 9 /* servro control*/
+#define MOTOR_PIN 10 /* back motor not bottom*/
+
+/* TARGET */
+double targetLat = number here ;
+double targetLon = number here;
+ 
+double currentLat = current num ;
+double currentLon = current num;
+float heading = 0; /*direction*/
+
+// -------------------- GPS ----------------------
+// SoftwareSerial is REMOVED. We are now using the Mega's hardware Serial1.
+
+struct
+{
+  char GPS_DATA[80]; 
+  bool GetData_Flag;   // Get GPS data flag bit
+  bool ParseData_Flag; // Parse completed flag bit 
+  char UTCTime[11];    // UTC time
+  char latitude[11];   // Latitude
+  char N_S[2];         // N/S
+  char longitude[12];  // Longitude
+  char E_W[2];         // E/W
+  bool Usefull_Flag;   // If the position information is valid flag bit
+} Save_Data;
+
+// GPS buffer
+const unsigned int gpsRxBufferLength = 600;
+char gpsRxBuffer[gpsRxBufferLength];
+unsigned int gpsRxLength = 0;
+
+/* PID */
+float Kp = 1.2;
+float Ki = 0.0;
+float Kd = 0.4;
+
+float integral = 0;
+float previousError = 0;
+unsigned long lastTime = 0;
+
+
+/* filter kalman style gives best estimate of actual value */
+float kAngle = 0;
+float kUncertainty = 2; /*this value need calibration before pid*/
+
+
+float processNoise = 0.05;
+float measurementNoise = 2;
+
+// -------------------- SETUP --------------------
+void setup() {
+
+  // Serial 1 (Pins 18 & 19) - To GPS Module
+  Serial1.begin(9600); 
+  Serial.println("GPS Initialising...");
+  Serial.println("Waiting");
+
+  Save_Data.GetData_Flag = false;
+  Save_Data.ParseData_Flag = false;
+  Save_Data.Usefull_Flag = false;
+  
+  Serial.begin(115200);
+  
+  Wire.begin(); /*starts compas*/
+
+  pinMode(RC_STEER_PIN, INPUT);
+  pinMode(RC_THROTTLE_PIN, INPUT); /* connecting RC to pins as inputs */
+
+  rudder.attach(SERVO_PIN);
+  pinMode(MOTOR_PIN, OUTPUT); /*conects motor and servo to pins*/
+
+  lastTime = millis(); /* pid time initialisation */
+  
+}
+
+void loop() {
+
+  readGPS();
+ 
+  print_GpsDATA();
+  
+  double distanceToTarget = distanceBetween(
+  currentLat, currentLon,
+  targetLat, targetLon
+);
+
+double targetBearing = courseTo(
+  currentLat, currentLon,
+  targetLat, targetLon
+);
+
+float smoothHeading = updateKalman(heading);
+
+  float error = targetBearing - smoothHeading;
+
+  // Normalize error
+  if (error > 180) error -= 360;
+  if (error < -180) error += 360;
+
+
+  float pidOutput = computePID(error);
+
+  int servoAngle = 90 + pidOutput;
+  servoAngle = constrain(servoAngle, 60, 120);
+
+  int baseSpeed = 180;
+  int speed = baseSpeed - abs(pidOutput) * 0.8;
+
+
+  int distanceAhead = readLidar();
+
+  if (distanceAhead < 100) {
+    servoAngle += 30;
+    speed = 120;
+  }
+
+  speed = constrain(speed, 100, 255);
+
+  rudder.write(servoAngle);
+  analogWrite(MOTOR_PIN, speed);
+
+/*stop at goal*/
+  if (distanceToTarget < 3) {
+    analogWrite(MOTOR_PIN, 0);
+  }
+   heading = readCompass();
+  
+ }
+
+
+
+float computePID(float error) {
+  unsigned long now = millis();
+  float dt = (now - lastTime) / 1000.0;
+
+  if (dt <= 0) dt = 0.01;
+
+  lastTime = now;
+
+  integral += error * dt;
+  float derivative = (error - previousError) / dt;
+
+  float output = Kp * error + Ki * integral + Kd * derivative;
+
+  previousError = error;
+
+  return output;
+}
+
+
+float updateKalman(float measurement) {
+
+  kUncertainty += processNoise;
+
+  float K = kUncertainty / (kUncertainty + measurementNoise);
+
+  kAngle = kAngle + K * (measurement - kAngle);
+
+  kUncertainty = (1 - K) * kUncertainty;
+
+  return kAngle;
+}
+
+
+void print_GpsDATA()
+{
+  if (Save_Data.ParseData_Flag)
+  {
+    Save_Data.ParseData_Flag = false;
+    
+    Serial.print("Save_Data.UTCTime = ");
+    Serial.println(Save_Data.UTCTime);
+
+    if(Save_Data.Usefull_Flag)
+    {
+      Save_Data.Usefull_Flag = false;
+      Serial.print("Save_Data.latitude = ");
+      Serial.println(Save_Data.latitude);
+      Serial.print("Save_Data.N_S = ");
+      Serial.println(Save_Data.N_S);
+      Serial.print("Save_Data.longitude = ");
+      Serial.println(Save_Data.longitude);
+      Serial.print("Save_Data.E_W = ");
+      Serial.println(Save_Data.E_W);
+    }
+    else
+    {
+      Serial.println("GPS DATA is not usefull!");
+    }    
+  }
+}
+// -------------------- Parse GPS Data FUNCTIONS --------------------
+void parse_GpsDATA()
+{
+  char *subString;
+  char *subStringNext;
+  if (Save_Data.GetData_Flag)
+  {
+    Save_Data.GetData_Flag = false;
+    Serial.println("************************");
+    Serial.println(Save_Data.GPS_DATA);
+    
+    for (int i = 0 ; i <= 6 ; i++)
+    {
+      if (i == 0)
+      {
+        if ((subString = strstr(Save_Data.GPS_DATA, ",")) == NULL)
+          Error_Flag(1);    //Analysis error 
+      }
+      else
+      {
+        subString++;
+        if ((subStringNext = strstr(subString, ",")) != NULL)
+        {
+          char usefullBuffer[2]; 
+          switch(i)
+          {
+            case 1:memcpy(Save_Data.UTCTime, subString, subStringNext - subString);break;    //Get UTC time 
+            case 2:memcpy(usefullBuffer, subString, subStringNext - subString);break;        //Get position status 
+            case 3:memcpy(Save_Data.latitude, subString, subStringNext - subString);break;   //Get latitude information 
+            case 4:memcpy(Save_Data.N_S, subString, subStringNext - subString);break;        //Get N/S
+            case 5:memcpy(Save_Data.longitude, subString, subStringNext - subString);break;  //Get longitude information 
+            case 6:memcpy(Save_Data.E_W, subString, subStringNext - subString);break;        //Get E/W
+
+            default:break;
+          }
+          subString = subStringNext;
+          Save_Data.ParseData_Flag = true;
+          if(usefullBuffer[0] == 'A')
+            Save_Data.Usefull_Flag = true;
+          else if(usefullBuffer[0] == 'V')
+            Save_Data.Usefull_Flag = false;
+        }
+        else
+        {
+          Error_Flag(2);    //Analysis error
+        }
+      }
+    }
+  }
+}
+
+// -------------------- Read GPS Data FUNCTIONS --------------------
+void readGPS() {
+  Read_Gps();
+  parse_GpsDATA();
+
+  if (Save_Data.Usefull_Flag) {
+    currentLat = convertToDecimal(Save_Data.latitude, Save_Data.N_S);
+    currentLon = convertToDecimal(Save_Data.longitude, Save_Data.E_W);
+  }
+}
+
+
+double convertToDecimal(char* raw, char* direction) {
+  double val = atof(raw);
+
+  int degrees = (int)(val / 100);
+  double minutes = val - (degrees * 100);
+
+  double decimal = degrees + (minutes / 60.0);
+
+  if (direction[0] == 'S' || direction[0] == 'W') {
+    decimal *= -1;
+  }
+
+  return decimal;
+}
+
+void RST_GpsRxBuffer(void)
+{
+  memset(gpsRxBuffer, 0, gpsRxBufferLength);      //Clear
+  gpsRxLength = 0;
+}
+
+
+float readCompass() {
+  Wire.beginTransmission(0x1E);
+  Wire.write(0x03);
+  Wire.endTransmission();
+
+  Wire.requestFrom(0x1E, 6);
+
+  if (6 <= Wire.available()) {
+    int16_t x = Wire.read() << 8 | Wire.read();
+    int16_t z = Wire.read() << 8 | Wire.read();
+    int16_t y = Wire.read() << 8 | Wire.read();
+
+    float heading = atan2(y, x);
+
+    if (heading < 0) heading += 2 * PI;
+
+    return heading * 180 / PI;
+  }
+
+  return 0;
+}
+
+
+double distanceBetween(double lat1, double lon1, double lat2, double lon2) {
+  const double R = 6371000; // meters
+
+  double dLat = radians(lat2 - lat1);
+  double dLon = radians(lon2 - lon1);
+
+  lat1 = radians(lat1);
+  lat2 = radians(lat2);
+
+  double a = sin(dLat/2) * sin(dLat/2) +
+             sin(dLon/2) * sin(dLon/2) * cos(lat1) * cos(lat2);
+
+  double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+
+  return R * c;
+}
+
+double courseTo(double lat1, double lon1, double lat2, double lon2) {
+  lat1 = radians(lat1);
+  lat2 = radians(lat2);
+  double dLon = radians(lon2 - lon1);
+
+  double y = sin(dLon) * cos(lat2);
+  double x = cos(lat1)*sin(lat2) -
+             sin(lat1)*cos(lat2)*cos(dLon);
+
+  double bearing = atan2(y, x);
+
+  bearing = degrees(bearing);
+  if (bearing < 0) bearing += 360;
+
+  return bearing;
+}
