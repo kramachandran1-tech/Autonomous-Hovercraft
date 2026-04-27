@@ -1,0 +1,52 @@
+#include <SoftwareSerial.h>
+
+SoftwareSerial HC12(2, 3); // RX, TX
+
+String incoming = "";
+
+void setup() {
+  Serial.begin(115200);
+  HC12.begin(9600);
+
+  Serial.println("HC-12 Receiver Ready");
+}
+
+void loop() {
+  while (HC12.available()) {
+    char c = HC12.read();
+
+    if (c == '\n') {
+      processData(incoming);
+      incoming = "";
+    } else {
+      incoming += c;
+    }
+  }
+}
+
+// -------------------- PROCESS DATA --------------------
+void processData(String data) {
+
+  Serial.print("Raw: ");
+  Serial.println(data);
+
+  // Expecting: G,lat,lon
+  if (data.startsWith("G,")) {
+
+    int firstComma = data.indexOf(',');
+    int secondComma = data.indexOf(',', firstComma + 1);
+
+    if (secondComma > 0) {
+      String latStr = data.substring(firstComma + 1, secondComma);
+      String lonStr = data.substring(secondComma + 1);
+
+      float lat = latStr.toFloat();
+      float lon = lonStr.toFloat();
+
+      Serial.print("Parsed GPS → ");
+      Serial.print(lat, 6);
+      Serial.print(", ");
+      Serial.println(lon, 6);
+    }
+  }
+}
