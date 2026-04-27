@@ -59,14 +59,21 @@ void setup() {
   Serial.println("GPS Initialising...");
   Serial.println("Waiting");
 
-  // Serial 2 (Pins 16 & 17) - To TX module
-  HC12.begin(9600);
-  Serial.println("Mega Transmitter Ready");
-
   Save_Data.GetData_Flag = false;
   Save_Data.ParseData_Flag = false;
   Save_Data.Usefull_Flag = false;
 }
+
+// -------------------- LOOP -------------------------------------
+void loop() {
+  //liftmotorspeed();
+  Read_Gps();        // always running in background
+  parse_GpsDATA();
+  print_GpsDATA();
+  
+  sweepServo();      // separate function
+}
+
 
 // -------------------- LIDAR READ --------------------
 uint16_t readDistance() {
@@ -79,20 +86,16 @@ uint16_t readDistance() {
   if (Wire.available() >= 2) {
     uint16_t dist = Wire.read();
     dist |= Wire.read() << 8;
-    HC12.print(dist)
     return dist;
   }
   return 0xFFFF;
 }
 
-// -------------------- LOOP -------------------------------------
-void loop() {
-  //liftmotorspeed();
-  Read_Gps();        // always running in background
-  parse_GpsDATA();
-  print_GpsDATA();
-  
-  sweepServo();      // separate function
+
+void sendToUNO(String msg) {
+  Wire.beginTransmission(8); // UNO address
+  Wire.print(msg);
+  Wire.endTransmission();
 }
 
 void liftmotorspeed()
@@ -145,6 +148,10 @@ void sweepServo() {
     Serial.print(pos);
     Serial.print(" Distance: ");
     Serial.println(dist);
+
+    String lidarMsg = "L," + String(pos) + "," + String(dist);
+    sendToUNO(lidarMsg);
+    
   }
 }
 
@@ -158,30 +165,14 @@ void print_GpsDATA()
     Serial.print("Save_Data.UTCTime = ");
     Serial.println(Save_Data.UTCTime);
 
-    if(Save_Data.Usefull_Flag)
-    {
-      Save_Data.Usefull_Flag = false;
-      Serial.print("Save_Data.latitude = ");
-      Serial.println(Save_Data.latitude);
-      HC12.print("Save_Data.latitude = ");
-      HC12.print(Save_Data.latitude);
+if(Save_Data.Usefull_Flag)
+{
+  double lat = convertToDecimal(Save_Data.latitude, Save_Data.N_S);
+  double lon = convertToDecimal(Save_Data.longitude, Save_Data.E_W);
 
-      Serial.print("Save_Data.N_S = ");
-      Serial.println(Save_Data.N_S);
-      HC12.print("Save_Data.N_S = ");
-      HC12.print(Save_Data.N_S);
-
-      Serial.print("Save_Data.longitude = ");
-      Serial.println(Save_Data.longitude);
-      HC12.print("Save_Data.longitude = ");
-      HC12.print(Save_Data.longitude);
-
-      Serial.print("Save_Data.E_W = ");
-      Serial.println(Save_Data.E_W);
-      HC12.print("Save_Data.E_W = ");
-      HC12.print(Save_Data.E_W = );
-
-    }
+  String gpsMsg = "G," + String(lat, 6) + "," + String(lon, 6);
+  sendToUNO(gpsMsg);
+}
     else
     {
       Serial.println("GPS DATA is not usefull!");
