@@ -52,12 +52,11 @@ void setup() {
   Serial.begin(115200);
   HC12.begin(9600);
 
+  Wire.begin(I2C_ADDRESS);   // MUST be this
   Wire.onReceive(receiveEvent);
 
   rudder.attach(SERVO_PIN);
   pinMode(MOTOR_PIN, OUTPUT);
-
-  Wire.begin(); // for compass
 
   lastTime = millis();
 
@@ -127,7 +126,7 @@ if (millis() - lastTransmit >= transmitInterval) {
   if (currentLat != 0 && currentLon != 0) {
     sendGPS_HC12();
   
-}
+}}}
 
 
 // -------------------- I2C RECEIVE --------------------
