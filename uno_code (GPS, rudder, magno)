@@ -1,39 +1,35 @@
 #include <Servo.h>
 #include <Wire.h>
+#include <SoftwareSerial.h>
+
+SoftwareSerial HC12(2, 3); 
+
+unsigned long lastTransmit = 0;
+const unsigned long transmitInterval = 200; // ms
 
 Servo rudder;
 
-#define SERVO_PIN 9 /* servro control*/
-#define MOTOR_PIN 10 /* back motor not bottom*/
+#define SERVO_PIN 9
+#define MOTOR_PIN 10
+
+#define I2C_ADDRESS 8
 
 /* TARGET */
-double targetLat = number here ;
-double targetLon = number here;
- 
-double currentLat = current num ;
-double currentLon = current num;
-float heading = 0; /*direction*/
+double targetLat = 53.3811;
+double targetLon = -1.4701;
 
-// -------------------- GPS ----------------------
-// SoftwareSerial is REMOVED. We are now using the Mega's hardware Serial1.
+/* CURRENT POSITION (updated from Mega) */
+double currentLat = 0;
+double currentLon = 0;
 
-struct
-{
-  char GPS_DATA[80]; 
-  bool GetData_Flag;   // Get GPS data flag bit
-  bool ParseData_Flag; // Parse completed flag bit 
-  char UTCTime[11];    // UTC time
-  char latitude[11];   // Latitude
-  char N_S[2];         // N/S
-  char longitude[12];  // Longitude
-  char E_W[2];         // E/W
-  bool Usefull_Flag;   // If the position information is valid flag bit
-} Save_Data;
+float heading = 0;
 
-// GPS buffer
-const unsigned int gpsRxBufferLength = 600;
-char gpsRxBuffer[gpsRxBufferLength];
-unsigned int gpsRxLength = 0;
+float lidarAngle = 90;
+float lidarDistance = 200;
+
+/* I2C buffer */
+char i2cBuffer[32];
+volatile bool newData = false;
 
 /* PID */
 float Kp = 1.2;
@@ -44,65 +40,60 @@ float integral = 0;
 float previousError = 0;
 unsigned long lastTime = 0;
 
-
-/* filter kalman style gives best estimate of actual value */
+/* Kalman */
 float kAngle = 0;
-float kUncertainty = 2; /*this value need calibration before pid*/
-
-
+float kUncertainty = 2;
 float processNoise = 0.05;
 float measurementNoise = 2;
 
 // -------------------- SETUP --------------------
 void setup() {
 
-  // Serial 1 (Pins 18 & 19) - To GPS Module
-  Serial1.begin(9600); 
-  Serial.println("GPS Initialising...");
-  Serial.println("Waiting");
-
-  Save_Data.GetData_Flag = false;
-  Save_Data.ParseData_Flag = false;
-  Save_Data.Usefull_Flag = false;
-  
   Serial.begin(115200);
-  
-  Wire.begin(); /*starts compas*/
+  HC12.begin(9600);
 
-  pinMode(RC_STEER_PIN, INPUT);
-  pinMode(RC_THROTTLE_PIN, INPUT); /* connecting RC to pins as inputs */
+  Wire.onReceive(receiveEvent);
 
   rudder.attach(SERVO_PIN);
-  pinMode(MOTOR_PIN, OUTPUT); /*conects motor and servo to pins*/
+  pinMode(MOTOR_PIN, OUTPUT);
 
-  lastTime = millis(); /* pid time initialisation */
-  
+  Wire.begin(); // for compass
+
+  lastTime = millis();
+
+  Serial.println("UNO Ready (I2C Slave)");
 }
 
+// -------------------- LOOP --------------------
 void loop() {
 
-  readGPS();
- 
-  print_GpsDATA();
-  
+  /* ---- RECEIVE GPS FROM MEGA ---- */
+if (newData) {
+  newData = false;
+
+  char temp[32];
+  strcpy(temp, i2cBuffer);
+
+  parseIncomingData(temp);
+}
+
+  /* ---- NAVIGATION ---- */
   double distanceToTarget = distanceBetween(
-  currentLat, currentLon,
-  targetLat, targetLon
-);
+    currentLat, currentLon,
+    targetLat, targetLon
+  );
 
-double targetBearing = courseTo(
-  currentLat, currentLon,
-  targetLat, targetLon
-);
+  double targetBearing = courseTo(
+    currentLat, currentLon,
+    targetLat, targetLon
+  );
 
-float smoothHeading = updateKalman(heading);
+  float smoothHeading = updateKalman(heading);
 
   float error = targetBearing - smoothHeading;
 
-  // Normalize error
   if (error > 180) error -= 360;
   if (error < -180) error += 360;
-
 
   float pidOutput = computePID(error);
 
@@ -112,8 +103,7 @@ float smoothHeading = updateKalman(heading);
   int baseSpeed = 180;
   int speed = baseSpeed - abs(pidOutput) * 0.8;
 
-
-  int distanceAhead = readLidar();
+ int distanceAhead = lidarDistance;
 
   if (distanceAhead < 100) {
     servoAngle += 30;
@@ -125,16 +115,104 @@ float smoothHeading = updateKalman(heading);
   rudder.write(servoAngle);
   analogWrite(MOTOR_PIN, speed);
 
-/*stop at goal*/
   if (distanceToTarget < 3) {
     analogWrite(MOTOR_PIN, 0);
   }
-   heading = readCompass();
+
+
+if (millis() - lastTransmit >= transmitInterval) {
+  lastTransmit = millis();
+
+  // Only send if we have valid data
+  if (currentLat != 0 && currentLon != 0) {
+    sendGPS_HC12();
   
- }
+}
 
 
+// -------------------- I2C RECEIVE --------------------
+void receiveEvent(int bytes) {
+  int i = 0;
 
+  while (Wire.available() && i < sizeof(i2cBuffer) - 1) {
+    i2cBuffer[i++] = Wire.read();
+  }
+
+  i2cBuffer[i] = '\0';
+  newData = true;
+}
+
+
+// -------------------- PARSE I2C GPS --------------------
+void parseIncomingData(char* data) {
+  if (data[0] == 'G') {
+    parseGPS(data);
+  } 
+  else if (data[0] == 'L') {
+    parseLidar(data);
+  }
+  else if (data[0] == 'H') {
+    parseHeading(data);
+  }
+}
+
+void parseGPS(char* data) {
+  strtok(data, ","); // skip 'G'
+
+  char* latStr = strtok(NULL, ",");
+  char* lonStr = strtok(NULL, ",");
+
+  if (latStr && lonStr) {
+    currentLat = atof(latStr);
+    currentLon = atof(lonStr);
+
+    Serial.print("GPS -> ");
+    Serial.print(currentLat, 6);
+    Serial.print(", ");
+    Serial.println(currentLon, 6);
+  }
+}
+
+
+void parseLidar(char* data) {
+  strtok(data, ","); // skip 'L'
+
+  char* angleStr = strtok(NULL, ",");
+  char* distStr  = strtok(NULL, ",");
+
+  if (angleStr && distStr) {
+    lidarAngle = atof(angleStr);
+    lidarDistance = atof(distStr);
+
+    Serial.print("LIDAR -> Angle: ");
+    Serial.print(lidarAngle);
+    Serial.print(" Dist: ");
+    Serial.println(lidarDistance);
+  }
+}
+
+void parseHeading(char* data) {
+  strtok(data, ","); // skip 'H'
+
+  char* headingStr = strtok(NULL, ",");
+
+  if (headingStr) {
+    heading = atof(headingStr);
+
+    Serial.print("HEADING -> ");
+    Serial.println(heading);
+  }
+}
+
+void sendGPS_HC12() {
+  HC12.print(currentLat, 6);
+  HC12.print(",");
+  HC12.print(currentLon, 6);
+  HC12.print("\n");
+}
+
+
+// -------------------- PID --------------------
 float computePID(float error) {
   unsigned long now = millis();
   float dt = (now - lastTime) / 1000.0;
@@ -153,158 +231,23 @@ float computePID(float error) {
   return output;
 }
 
-
+// -------------------- KALMAN --------------------
 float updateKalman(float measurement) {
-
   kUncertainty += processNoise;
 
   float K = kUncertainty / (kUncertainty + measurementNoise);
 
   kAngle = kAngle + K * (measurement - kAngle);
-
   kUncertainty = (1 - K) * kUncertainty;
 
   return kAngle;
 }
 
 
-void print_GpsDATA()
-{
-  if (Save_Data.ParseData_Flag)
-  {
-    Save_Data.ParseData_Flag = false;
-    
-    Serial.print("Save_Data.UTCTime = ");
-    Serial.println(Save_Data.UTCTime);
 
-    if(Save_Data.Usefull_Flag)
-    {
-      Save_Data.Usefull_Flag = false;
-      Serial.print("Save_Data.latitude = ");
-      Serial.println(Save_Data.latitude);
-      Serial.print("Save_Data.N_S = ");
-      Serial.println(Save_Data.N_S);
-      Serial.print("Save_Data.longitude = ");
-      Serial.println(Save_Data.longitude);
-      Serial.print("Save_Data.E_W = ");
-      Serial.println(Save_Data.E_W);
-    }
-    else
-    {
-      Serial.println("GPS DATA is not usefull!");
-    }    
-  }
-}
-// -------------------- Parse GPS Data FUNCTIONS --------------------
-void parse_GpsDATA()
-{
-  char *subString;
-  char *subStringNext;
-  if (Save_Data.GetData_Flag)
-  {
-    Save_Data.GetData_Flag = false;
-    Serial.println("************************");
-    Serial.println(Save_Data.GPS_DATA);
-    
-    for (int i = 0 ; i <= 6 ; i++)
-    {
-      if (i == 0)
-      {
-        if ((subString = strstr(Save_Data.GPS_DATA, ",")) == NULL)
-          Error_Flag(1);    //Analysis error 
-      }
-      else
-      {
-        subString++;
-        if ((subStringNext = strstr(subString, ",")) != NULL)
-        {
-          char usefullBuffer[2]; 
-          switch(i)
-          {
-            case 1:memcpy(Save_Data.UTCTime, subString, subStringNext - subString);break;    //Get UTC time 
-            case 2:memcpy(usefullBuffer, subString, subStringNext - subString);break;        //Get position status 
-            case 3:memcpy(Save_Data.latitude, subString, subStringNext - subString);break;   //Get latitude information 
-            case 4:memcpy(Save_Data.N_S, subString, subStringNext - subString);break;        //Get N/S
-            case 5:memcpy(Save_Data.longitude, subString, subStringNext - subString);break;  //Get longitude information 
-            case 6:memcpy(Save_Data.E_W, subString, subStringNext - subString);break;        //Get E/W
-
-            default:break;
-          }
-          subString = subStringNext;
-          Save_Data.ParseData_Flag = true;
-          if(usefullBuffer[0] == 'A')
-            Save_Data.Usefull_Flag = true;
-          else if(usefullBuffer[0] == 'V')
-            Save_Data.Usefull_Flag = false;
-        }
-        else
-        {
-          Error_Flag(2);    //Analysis error
-        }
-      }
-    }
-  }
-}
-
-// -------------------- Read GPS Data FUNCTIONS --------------------
-void readGPS() {
-  Read_Gps();
-  parse_GpsDATA();
-
-  if (Save_Data.Usefull_Flag) {
-    currentLat = convertToDecimal(Save_Data.latitude, Save_Data.N_S);
-    currentLon = convertToDecimal(Save_Data.longitude, Save_Data.E_W);
-  }
-}
-
-
-double convertToDecimal(char* raw, char* direction) {
-  double val = atof(raw);
-
-  int degrees = (int)(val / 100);
-  double minutes = val - (degrees * 100);
-
-  double decimal = degrees + (minutes / 60.0);
-
-  if (direction[0] == 'S' || direction[0] == 'W') {
-    decimal *= -1;
-  }
-
-  return decimal;
-}
-
-void RST_GpsRxBuffer(void)
-{
-  memset(gpsRxBuffer, 0, gpsRxBufferLength);      //Clear
-  gpsRxLength = 0;
-}
-
-
-float readCompass() {
-  Wire.beginTransmission(0x1E);
-  Wire.write(0x03);
-  Wire.endTransmission();
-
-  Wire.requestFrom(0x1E, 6);
-
-  if (6 <= Wire.available()) {
-    int16_t x = Wire.read() << 8 | Wire.read();
-    int16_t z = Wire.read() << 8 | Wire.read();
-    int16_t y = Wire.read() << 8 | Wire.read();
-
-    float heading = atan2(y, x);
-
-    if (heading < 0) heading += 2 * PI;
-
-    return heading * 180 / PI;
-  }
-
-  return 0;
-}
-
-
+// -------------------- NAV MATH --------------------
 double distanceBetween(double lat1, double lon1, double lat2, double lon2) {
-  const double R = 6371000; // meters
+  const double R = 6371000;
 
   double dLat = radians(lat2 - lat1);
   double dLon = radians(lon2 - lon1);
