@@ -1,0 +1,149 @@
+#include <Wire.h>
+#include <Servo.h>
+
+#define UNO_ADDR 8
+#define LIDAR_ADDR 0x10  
+
+Servo miniServo;
+
+// ---------- DATA PACKET ----------
+struct DataPacket {
+  float lat;
+  float lon;
+  uint16_t distance;
+  uint8_t angle;
+};
+
+DataPacket data;
+
+// ---------- GPS ----------
+struct {
+  char GPS_DATA[80];
+  bool GetData_Flag;
+  bool ParseData_Flag;
+  char latitude[11];
+  char N_S[2];
+  char longitude[12];
+  char E_W[2];
+  bool Usefull_Flag;
+} Save_Data;
+
+char gpsRxBuffer[600];
+unsigned int gpsRxLength = 0;
+
+// ---------- SETUP ----------
+void setup() {
+  Wire.begin();  
+  Serial.begin(115200);
+  Serial1.begin(9600);
+
+  miniServo.attach(9);
+
+  Serial.println("MASTER READY");
+}
+
+// ---------- LOOP ----------
+void loop() {
+  Read_Gps();
+  parse_GpsDATA();
+
+  if (Save_Data.Usefull_Flag) {
+    data.lat = convertToDecimal(Save_Data.latitude, Save_Data.N_S);
+    data.lon = convertToDecimal(Save_Data.longitude, Save_Data.E_W);
+  }
+
+  sweepAndMeasure();
+
+  sendPacket();
+
+  delay(50); // 20Hz update
+}
+
+// ---------- SEND ----------
+void sendPacket() {
+  Wire.beginTransmission(UNO_ADDR);
+  Wire.write((byte*)&data, sizeof(data));
+  Wire.endTransmission();
+}
+
+// ---------- LIDAR ----------
+uint16_t readDistance() {
+  Wire.beginTransmission(LIDAR_ADDR);
+  Wire.write(0x00);
+  Wire.endTransmission();
+
+  Wire.requestFrom(LIDAR_ADDR, 2);
+
+  if (Wire.available() >= 2) {
+    uint16_t dist = Wire.read();
+    dist |= Wire.read() << 8;
+    return dist;
+  }
+  return 999;
+}
+
+// ---------- SERVO SWEEP ----------
+void sweepAndMeasure() {
+  static int pos = 0;
+  static int dir = 1;
+  static unsigned long lastMove = 0;
+
+  if (millis() - lastMove > 50) {
+    lastMove = millis();
+
+    miniServo.write(pos);
+    pos += dir;
+
+    if (pos >= 180 || pos <= 0) dir *= -1;
+
+    data.angle = pos;
+    data.distance = readDistance();
+  }
+}
+
+// ---------- GPS ----------
+double convertToDecimal(char* raw, char* dir) {
+  double val = atof(raw);
+  int deg = (int)(val / 100);
+  double min = val - deg * 100;
+  double dec = deg + (min / 60.0);
+
+  if (dir[0] == 'S' || dir[0] == 'W') dec *= -1;
+  return dec;
+}
+
+void Read_Gps() {
+  while (Serial1.available()) {
+    gpsRxBuffer[gpsRxLength++] = Serial1.read();
+    if (gpsRxLength >= sizeof(gpsRxBuffer)) gpsRxLength = 0;
+  }
+
+  char* head = strstr(gpsRxBuffer, "$GPRMC,");
+  char* tail = strstr(gpsRxBuffer, "\r\n");
+
+  if (head && tail && tail > head) {
+    memcpy(Save_Data.GPS_DATA, head, tail - head);
+    Save_Data.GetData_Flag = true;
+    gpsRxLength = 0;
+  }
+}
+
+void parse_GpsDATA() {
+  if (!Save_Data.GetData_Flag) return;
+  Save_Data.GetData_Flag = false;
+
+  char* token = strtok(Save_Data.GPS_DATA, ",");
+  int i = 0;
+
+  while (token) {
+    switch (i) {
+      case 2: Save_Data.Usefull_Flag = (token[0] == 'A'); break;
+      case 3: strcpy(Save_Data.latitude, token); break;
+      case 4: strcpy(Save_Data.N_S, token); break;
+      case 5: strcpy(Save_Data.longitude, token); break;
+      case 6: strcpy(Save_Data.E_W, token); break;
+    }
+    token = strtok(NULL, ",");
+    i++;
+  }
+}
