@@ -2,8 +2,9 @@
 #include <Wire.h>
 
 
-// -------------------- LIDAR --------------------
+// -------------------- LIDAR AND UNO --------------------
 #define LIDAR_ADDR 0x10  
+#define UNO_ADDR 8
 // -------------------- SERVO --------------------
 Servo miniServo;
 // -------------------- ESC --------------------
@@ -12,9 +13,9 @@ Servo ESC2;
 
 // ESC throttle values
 const int lift_speed = 1100; // adjust for your motor/ESC (could be change depend on the ESC)
-//const int slowSpeed = 1600;   // adjust for your motor/ESC (could be change depend on the ESC)
-//const int minSpeed = 1800;   // adjust for your motor/ESC (could be change depend on the ESC)
-//const int fastSpeed = 2000; // adjust for your motor/ESC (could be change depend on the ESC)
+const int slowSpeed = 1600;   // adjust for your motor/ESC (could be change depend on the ESC)
+const int minSpeed = 1800;   // adjust for your motor/ESC (could be change depend on the ESC)
+const int fastSpeed = 2000; // adjust for your motor/ESC (could be change depend on the ESC)
 
 // -------------------- GPS ----------------------
 // SoftwareSerial is REMOVED. We are now using the Mega's hardware Serial1.
@@ -54,6 +55,11 @@ void setup() {
   Wire.begin(); // Lidar sensor setup
   Serial.println("TF-Luna I2C test"); 
 
+  // MEGA TO UNO TEST
+  Wire.beginTransmission(UNO_ADDR);
+  Wire.write("Mega - Uno comms working\n");   // send simple text
+  byte error = Wire.endTransmission();
+
   // Serial 1 (Pins 18 & 19) - To GPS Module
   Serial1.begin(9600); 
   Serial.println("GPS Initialising...");
@@ -67,6 +73,7 @@ void setup() {
 // -------------------- LOOP -------------------------------------
 void loop() {
   //liftmotorspeed();
+
   Read_Gps();        // always running in background
   parse_GpsDATA();
   print_GpsDATA();
@@ -93,8 +100,8 @@ uint16_t readDistance() {
 
 
 void sendToUNO(String msg) {
-  Wire.beginTransmission(8); // UNO address
-  Wire.print(msg);
+  Wire.beginTransmission(UNO_ADDR); // UNO address
+  Wire.write(msg);
   Wire.endTransmission();
 }
 
@@ -121,6 +128,7 @@ void Error_Flag(int num)
 void controlESC(uint16_t dist) {
   if (dist < 20) {
     ESC1.writeMicroseconds(1000);  // stop motor (adjust if your ESC uses a different stop value)
+
   } else {
     ESC1.writeMicroseconds(1050); // or whatever your normal throttle value is
   }
@@ -142,15 +150,19 @@ void sweepServo() {
 
     uint16_t dist = readDistance();
 
+    if (dist < 20) {
+      // Send LIDAR obstacle position ONLY if there is an obstacle 
+      String lidarMsg = "L," + String(pos) + "," + String(dist);
+      sendToUNO(lidarMsg);
+    }
+
+    // Propulsion motor action if there is an obstacle 
     controlESC(dist);
 
     Serial.print("Angle: ");
     Serial.print(pos);
     Serial.print(" Distance: ");
     Serial.println(dist);
-
-    String lidarMsg = "L," + String(pos) + "," + String(dist);
-    sendToUNO(lidarMsg);
     
   }
 }
