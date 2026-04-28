@@ -1,0 +1,150 @@
+#include <Wire.h>
+#include <Servo.h>
+
+#define I2C_ADDR 8
+
+Servo rudder;
+
+#define SERVO_PIN 9
+#define MOTOR_PIN 10
+
+// ---------- DATA ----------
+struct DataPacket {
+  float lat;
+  float lon;
+  uint16_t distance;
+  uint8_t angle;
+};
+
+volatile DataPacket data;
+
+// ---------- NAV ----------
+double targetLat = 0.0;
+double targetLon = 0.0;
+
+float heading = 0;
+
+// PID
+float Kp = 1.2, Ki = 0.0, Kd = 0.4;
+float integral = 0, prevError = 0;
+unsigned long lastTime = 0;
+
+// ---------- SETUP ----------
+void setup() {
+  Wire.begin(I2C_ADDR);
+  Wire.onReceive(receiveEvent);
+
+  Serial.begin(115200);
+
+  rudder.attach(SERVO_PIN);
+  pinMode(MOTOR_PIN, OUTPUT);
+
+  lastTime = millis();
+}
+
+// ---------- LOOP ----------
+void loop() {
+
+  double distanceToTarget = distanceBetween(
+    data.lat, data.lon,
+    targetLat, targetLon
+  );
+
+  double targetBearing = courseTo(
+    data.lat, data.lon,
+    targetLat, targetLon
+  );
+
+  heading = readCompass();
+
+  float error = targetBearing - heading;
+  if (error > 180) error -= 360;
+  if (error < -180) error += 360;
+
+  float pid = computePID(error);
+
+  int servoAngle = constrain(90 + pid, 60, 120);
+
+  int speed = 180 - abs(pid) * 0.8;
+
+  if (data.distance < 100) {
+    servoAngle += 30;
+    speed = 120;
+  }
+
+  rudder.write(servoAngle);
+  analogWrite(MOTOR_PIN, constrain(speed, 100, 255));
+
+  if (distanceToTarget < 3) {
+    analogWrite(MOTOR_PIN, 0);
+  }
+}
+
+// ---------- RECEIVE ----------
+void receiveEvent(int bytes) {
+  if (bytes == sizeof(DataPacket)) {
+    Wire.readBytes((char*)&data, sizeof(data));
+  }
+}
+
+// ---------- PID ----------
+float computePID(float error) {
+  float dt = (millis() - lastTime) / 1000.0;
+  lastTime = millis();
+
+  integral += error * dt;
+  float derivative = (error - prevError) / dt;
+
+  prevError = error;
+
+  return Kp * error + Ki * integral + Kd * derivative;
+}
+
+// ---------- COMPASS ----------
+float readCompass() {
+  Wire.beginTransmission(0x1E);
+  Wire.write(0x03);
+  Wire.endTransmission();
+
+  Wire.requestFrom(0x1E, 6);
+
+  if (Wire.available() == 6) {
+    int x = Wire.read()<<8 | Wire.read();
+    int z = Wire.read()<<8 | Wire.read();
+    int y = Wire.read()<<8 | Wire.read();
+
+    float h = atan2(y, x);
+    if (h < 0) h += 2*PI;
+    return h * 180 / PI;
+  }
+  return 0;
+}
+
+// ---------- NAV MATH ----------
+double distanceBetween(double lat1, double lon1, double lat2, double lon2) {
+  const double R = 6371000;
+  double dLat = radians(lat2 - lat1);
+  double dLon = radians(lon2 - lon1);
+
+  lat1 = radians(lat1);
+  lat2 = radians(lat2);
+
+  double a = sin(dLat/2)*sin(dLat/2) +
+             sin(dLon/2)*sin(dLon/2)*cos(lat1)*cos(lat2);
+
+  return R * 2 * atan2(sqrt(a), sqrt(1 - a));
+}
+
+double courseTo(double lat1, double lon1, double lat2, double lon2) {
+  lat1 = radians(lat1);
+  lat2 = radians(lat2);
+
+  double dLon = radians(lon2 - lon1);
+
+  double y = sin(dLon) * cos(lat2);
+  double x = cos(lat1)*sin(lat2) -
+             sin(lat1)*cos(lat2)*cos(dLon);
+
+  double brng = degrees(atan2(y, x));
+  return (brng < 0) ? brng + 360 : brng;
+}
