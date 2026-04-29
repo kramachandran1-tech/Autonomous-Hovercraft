@@ -1,4 +1,4 @@
-#include <Servo.h>
+
 #include <Wire.h>
 #include <SoftwareSerial.h>
 
@@ -9,7 +9,6 @@ const unsigned long transmitInterval = 200; // ms
 
 #define I2C_ADDRESS 8
 
-float heading = 0;
 
 float lidarAngle = 90;
 float lidarDistance = 200;
