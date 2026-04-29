@@ -72,10 +72,11 @@ void parseLidar(char* data) {
     lidarAngle = atof(angleStr);
     lidarDistance = atof(distStr);
 
-    HC12.print("L");
+    HC12.print("L,");
     Serial.print("LIDAR -> Angle: ");
     Serial.print(lidarAngle);
     HC12.print(lidarAngle);
+    HC12.print(",");
     Serial.print(" Dist: ");
     Serial.println(lidarDistance);
     HC12.print(lidarDistance);
