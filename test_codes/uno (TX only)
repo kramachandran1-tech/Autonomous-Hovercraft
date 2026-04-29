@@ -1,4 +1,3 @@
-
 #include <Wire.h>
 #include <SoftwareSerial.h>
 
@@ -9,9 +8,8 @@ const unsigned long transmitInterval = 200; // ms
 
 #define I2C_ADDRESS 8
 
-
-float lidarAngle = 90;
-float lidarDistance = 200;
+int lidarAngle = 90;
+int lidarDistance = 200;
 
 /* I2C buffer */
 char i2cBuffer[32];
@@ -34,10 +32,13 @@ void loop() {
 
   /* ---- RECEIVE GPS FROM MEGA ---- */
 if (newData) {
+  noInterrupts();         
   newData = false;
 
   char temp[32];
   strcpy(temp, i2cBuffer);
+
+  interrupts();          
 
   parseIncomingData(temp);
 }
@@ -62,23 +63,27 @@ void parseIncomingData(char* data) {
 }
 
 void parseLidar(char* data) {
-  strtok(data, ","); // skip 'L'
+  strtok(data, ",");
 
   char* angleStr = strtok(NULL, ",");
   char* distStr  = strtok(NULL, ",");
 
   if (angleStr && distStr) {
-    lidarAngle = atof(angleStr);
-    lidarDistance = atof(distStr);
+    lidarAngle = atoi(angleStr);
+    lidarDistance = atoi(distStr);
 
-    HC12.print("L,");
-    Serial.print("LIDAR -> Angle: ");
-    Serial.print(lidarAngle);
-    HC12.print(lidarAngle);
-    HC12.print(",");
-    Serial.print(" Dist: ");
-    Serial.println(lidarDistance);
-    HC12.print(lidarDistance);
+    if (millis() - lastTransmit >= transmitInterval) {
+      lastTransmit = millis();
+
+      HC12.print("L,");
+      HC12.print(lidarAngle);
+      HC12.print(",");
+      HC12.println(lidarDistance);
+
+      Serial.print("LIDAR -> ");
+      Serial.print(lidarAngle);
+      Serial.print(",");
+      Serial.println(lidarDistance);
+    }
   }
 }
-
