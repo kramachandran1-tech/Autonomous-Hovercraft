@@ -1,0 +1,90 @@
+#include <Servo.h>
+#include <Wire.h>
+
+
+// -------------------- LIDAR AND UNO --------------------
+#define LIDAR_ADDR 0x10  
+#define UNO_ADDR 8
+// -------------------- SERVO --------------------
+Servo miniServo;
+ 
+// -------------------- SETUP --------------------
+void setup() {
+  miniServo.attach(9); // Servo setup
+   
+  delay(2000);
+ 
+  // Serial 0 (Pins 0 & 1) - To Computer/Serial Monitor
+  Serial.begin(115200);
+
+  Wire.begin(); // Lidar sensor setup
+  Serial.println("TF-Luna I2C test"); 
+
+  // MEGA TO UNO TEST
+  Wire.beginTransmission(UNO_ADDR);
+  Wire.write("Mega - Uno comms working\n");   // send simple text
+  byte error = Wire.endTransmission();
+ 
+}
+
+// -------------------- LOOP -------------------------------------
+void loop() {
+  
+  sweepServo();      // separate function
+}
+
+
+// -------------------- LIDAR READ --------------------
+uint16_t readDistance() {
+  Wire.beginTransmission(LIDAR_ADDR);
+  Wire.write(0x00);
+  Wire.endTransmission();
+
+  Wire.requestFrom(LIDAR_ADDR, 2);
+
+  if (Wire.available() >= 2) {
+    uint16_t dist = Wire.read();
+    dist |= Wire.read() << 8;
+    return dist;
+  }
+  return 0xFFFF;
+}
+
+
+void sendToUNO(int angle, uint16_t dist) {
+  char buffer[20];  // keep under 32 bytes!
+  snprintf(buffer, sizeof(buffer), "L,%d,%d", angle, dist);
+
+  Wire.beginTransmission(UNO_ADDR);
+  Wire.write(buffer);
+  Wire.endTransmission();
+}
+
+
+// -------------------- Sweep Servo FUNCTIONS --------------------
+void sweepServo() {
+  static int pos = 0;
+  static int dir = 1;
+  static unsigned long lastMove = 0;
+
+  if (millis() - lastMove >= 50) {
+    lastMove = millis();
+
+    miniServo.write(pos);
+    pos += dir;
+
+    if (pos >= 180 || pos <= 0) dir *= -1;
+
+    uint16_t dist = readDistance();
+
+    if (dist < 20) {
+      sendToUNO(pos, dist);
+    }
+     
+    Serial.print("Angle: ");
+    Serial.print(pos);
+    Serial.print(" Distance: ");
+    Serial.println(dist);
+    
+  }
+}
