@@ -1,0 +1,34 @@
+#include <SoftwareSerial.h>
+
+SoftwareSerial HC12(2, 3); // RX, TX
+
+char buffer[32];
+byte index = 0;
+
+void setup() {
+  Serial.begin(115200);   // MUST match Processing
+  HC12.begin(9600);       // MUST match transmitter
+
+  Serial.println("HC12 Receiver Ready");
+}
+
+void loop() {
+  while (HC12.available()) {
+    char c = HC12.read();
+
+    // build line until newline
+    if (c == '\n') {
+      buffer[index] = '\0';   // terminate string
+
+      Serial.println(buffer); // send to Processing
+
+      index = 0;              // reset buffer
+    }
+    else {
+      if (index < sizeof(buffer) - 1) {
+        buffer[index++] = c;
+      }
+      // else: overflow → just ignore extra chars
+    }
+  }
+}
