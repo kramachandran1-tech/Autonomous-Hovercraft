@@ -1,0 +1,84 @@
+#include <Servo.h>
+#include <Wire.h>
+#include <SoftwareSerial.h>
+
+SoftwareSerial HC12(2, 3); 
+
+unsigned long lastTransmit = 0;
+const unsigned long transmitInterval = 200; // ms
+
+#define I2C_ADDRESS 8
+
+float heading = 0;
+
+float lidarAngle = 90;
+float lidarDistance = 200;
+
+/* I2C buffer */
+char i2cBuffer[32];
+volatile bool newData = false;
+
+// -------------------- SETUP --------------------
+void setup() {
+
+  Serial.begin(115200);
+  HC12.begin(9600);
+
+  Wire.begin(I2C_ADDRESS);   // MUST be this
+  Wire.onReceive(receiveEvent);
+
+  Serial.println("UNO Ready (I2C Slave)");
+}
+
+// -------------------- LOOP --------------------
+void loop() {
+
+  /* ---- RECEIVE GPS FROM MEGA ---- */
+if (newData) {
+  newData = false;
+
+  char temp[32];
+  strcpy(temp, i2cBuffer);
+
+  parseIncomingData(temp);
+}
+}
+// -------------------- I2C RECEIVE --------------------
+void receiveEvent(int bytes) {
+  int i = 0;
+
+  while (Wire.available() && i < sizeof(i2cBuffer) - 1) {
+    i2cBuffer[i++] = Wire.read();
+  }
+
+  i2cBuffer[i] = '\0';
+  newData = true;
+}
+
+// -------------------- PARSE I2C GPS --------------------
+void parseIncomingData(char* data) {
+ if (data[0] == 'L') {
+    parseLidar(data);
+  }
+}
+
+void parseLidar(char* data) {
+  strtok(data, ","); // skip 'L'
+
+  char* angleStr = strtok(NULL, ",");
+  char* distStr  = strtok(NULL, ",");
+
+  if (angleStr && distStr) {
+    lidarAngle = atof(angleStr);
+    lidarDistance = atof(distStr);
+
+    HC12.print("L");
+    Serial.print("LIDAR -> Angle: ");
+    Serial.print(lidarAngle);
+    HC12.print(lidarAngle);
+    Serial.print(" Dist: ");
+    Serial.println(lidarDistance);
+    HC12.print(lidarDistance);
+  }
+}
+
