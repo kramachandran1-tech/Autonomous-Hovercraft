@@ -1,0 +1,24 @@
+#include <SoftwareSerial.h>
+
+SoftwareSerial HC12(2, 3); 
+
+void setup() {
+  Serial.begin(9600);   
+  HC12.begin(9600);    
+
+}
+
+void loop() {
+ 
+    if (HC12.available()){
+      
+      Serial.write(HC12.read());
+
+    }
+    
+    if (Serial.available()){
+      char c=Serial.read();
+      HC12.print(c);
+      Serial.write(c);
+    }
+}
