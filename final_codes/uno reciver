@@ -1,0 +1,50 @@
+#include <SoftwareSerial.h>
+
+SoftwareSerial HC12(2, 3); // RX, TX
+
+char buffer[32];
+byte index = 0;
+
+void setup() {
+  Serial.begin(115200);   // PC / Processing
+  HC12.begin(9600);       // Radio
+
+  Serial.println("Receiver UNO Ready");
+}
+
+void loop() {
+
+  while (HC12.available()) {
+    char c = HC12.read();
+
+    // If newline = full message
+    if (c == '\n') {
+      buffer[index] = '\0';  // terminate string
+
+      processData(buffer);
+
+      index = 0; // reset buffer
+    }
+    else {
+      if (index < sizeof(buffer) - 1) {
+        buffer[index++] = c;
+      }
+    }
+  }
+}
+
+// -------------------- PROCESS --------------------
+void processData(char* data) {
+
+  // Optional: basic validation
+  if (data[0] != 'L') return;
+
+  // Forward EXACTLY to Processing
+  Serial.println(data);
+
+  // Debug (optional)
+  /*
+  Serial.print("Received: ");
+  Serial.println(data);
+  */
+}
