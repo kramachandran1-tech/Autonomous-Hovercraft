@@ -1,0 +1,18 @@
+#include <SoftwareSerial.h>
+
+// HC-12 connections: RX = 2, TX = 3
+SoftwareSerial HC12(2, 3);
+
+void setup() {
+  Serial.begin(115200);
+  HC12.begin(9600);  // must match transmitter
+
+  Serial.println("HC-12 Receiver Ready");
+}
+
+void loop() {
+  while (HC12.available()) {
+    char c = HC12.read();
+    Serial.write(c);  // print exactly what is received
+  }
+}
