@@ -1,0 +1,143 @@
+#include <SoftwareSerial.h>
+
+SoftwareSerial HC12(2, 3); 
+
+const int led1 = A0;  
+const int led2 = A5; 
+const int led3 = 5;
+
+const int signalLed = 12;
+
+bool state1 = false;
+bool state2 = false;
+int mode=0;
+int speed;
+
+const unsigned int MAX_MESSAGE_LENGTH = 64;
+char receivedChars[MAX_MESSAGE_LENGTH];
+bool newData = false;
+unsigned long lastReceiveTime = 0; 
+const unsigned long SIGNAL_TIMEOUT = 2000; 
+
+// ESC throttle values
+const int lift_speed = 1100; // adjust for your motor/ESC (could be change depend on the ESC)
+const int slowSpeed = 1600;   // adjust for your motor/ESC (could be change depend on the ESC)
+const int minSpeed = 1800;   // adjust for your motor/ESC (could be change depend on the ESC)
+const int fastSpeed = 2000; // adjust for your motor/ESC (could be change depend on the ESC)
+
+// -------------------- GPS ----------------------
+// SoftwareSerial is REMOVED. We are now using the Mega's hardware Serial1.
+
+struct
+{
+  char GPS_DATA[80]; 
+  bool GetData_Flag;   // Get GPS data flag bit
+  bool ParseData_Flag; // Parse completed flag bit 
+  char UTCTime[11];    // UTC time
+  char latitude[11];   // Latitude
+  char N_S[2];         // N/S
+  char longitude[12];  // Longitude
+  char E_W[2];         // E/W
+  bool Usefull_Flag;   // If the position information is valid flag bit
+} Save_Data;
+
+// GPS buffer
+const unsigned int gpsRxBufferLength = 600;
+char gpsRxBuffer[gpsRxBufferLength];
+unsigned int gpsRxLength = 0;
+
+
+String lidarMsg;
+  double lat=12.909;
+  double lon=24.776;
+  int pos=123;
+  int dist=256;
+
+void setup() {
+  Serial.begin(9600);   
+  HC12.begin(9600);
+  Serial.print("Onboard ready\n");
+  HC12.print("Onboard Ready\n");
+
+
+}
+
+void loop() {
+  receiveData();
+    String gpsMsg = "G," + String(lat, 6) + "," + String(lon, 6);
+  String lidarMsg = "L," + String(pos) + "," + String(dist);
+  
+    
+    
+    
+    if(newData){
+      Serial.write(receivedChars);
+    if (strncmp(receivedChars, "GPS", 3) == 0){
+      mode = 1;
+      Serial.print(" requested\n");
+          HC12.print(gpsMsg);
+    HC12.print("\n");
+    delay(4000);
+    }
+    if (strncmp(receivedChars, "Lidar", 5) == 0){
+      mode = 2;
+      Serial.print(" requested\n");
+          HC12.print(lidarMsg);
+    HC12.print("\n");
+    delay(4000);
+    }
+    else {
+    
+      
+      mode = 3;
+          HC12.print("Unknown Command");
+    HC12.print("\n");
+    Serial.print("Unknown Command\n");
+    delay(200);
+    mode=0;
+    delay(3800);
+    }
+     newData=false;
+  mode=0;
+    
+    }
+  
+  
+  if(mode==0){
+    HC12.print(gpsMsg);
+    HC12.print("\n");
+    HC12.print(lidarMsg);
+    HC12.print("\n");
+    delay(4000);
+  }
+
+ 
+  
+
+
+}
+
+void receiveData() {
+  static byte ndx = 0;
+  char endMarker = '\n';
+  char rc;
+
+  while (HC12.available() > 0 && !newData) {
+    rc = HC12.read();
+
+    if (rc != endMarker) {
+      if (ndx < MAX_MESSAGE_LENGTH - 1) {
+        receivedChars[ndx++] = rc;
+      }
+    } else {
+      receivedChars[ndx] = '\0';  
+      ndx = 0;
+      newData = true;
+      lastReceiveTime = millis(); 
+    }
+  }
+}
+
+
+
+
