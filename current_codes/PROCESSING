@@ -1,0 +1,73 @@
+import processing.serial.*;
+
+Serial myPort;
+
+float angle = 0;
+float distance = 0;
+
+void setup() {
+  size(600, 600);
+
+  println(Serial.list()); // optional debug
+
+  myPort = new Serial(this, "COM12", 115200);
+  myPort.bufferUntil('\n');
+}
+
+void draw() {
+  background(0);
+
+  // Center of screen
+  translate(width/2, height/2);
+
+  stroke(0, 255, 0);
+  noFill();
+
+  // Full radar circles
+  for (int r = 50; r <= 250; r += 50) {
+    ellipse(0, 0, r*2, r*2);
+  }
+
+  // Use angle directly (0–180 or 0–360 both fine)
+  float a = radians(angle);
+
+  // Sweep line
+  line(0, 0, cos(a)*250, -sin(a)*250);
+
+  // Map distance to screen
+  float d = map(distance, 0, 200, 0, 250);
+  float x = cos(a) * d;
+  float y = -sin(a) * d;
+
+  // Draw object
+  fill(255, 0, 0);
+  noStroke();
+  ellipse(x, y, 10, 10);
+}
+
+void serialEvent(Serial myPort) {
+  String data = myPort.readStringUntil('\n');
+
+  if (data != null) {
+    data = trim(data);
+
+    float newAngle = angle;
+    float newDistance = distance;
+
+    String[] parts = split(data, ' ');
+
+    for (String p : parts) {
+      if (p.startsWith("A:")) {
+        newAngle = float(p.substring(2));
+      } else if (p.startsWith("D:")) {
+        newDistance = float(p.substring(2));
+      }
+    }
+
+    angle = newAngle;
+    distance = newDistance;
+
+    // optional debug
+    println("Angle: " + angle + " Distance: " + distance);
+  }
+}
