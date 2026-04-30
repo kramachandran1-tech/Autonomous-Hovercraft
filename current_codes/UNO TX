@@ -1,0 +1,45 @@
+#include <Wire.h>
+#include <SoftwareSerial.h>
+
+#define UNO_ADDR 8
+
+// HC-12 on pins 2 (RX), 3 (TX)
+SoftwareSerial HC12(2, 3);
+
+char receivedData[64];
+volatile bool newData = false;
+
+void setup() {
+  Serial.begin(115200);
+  HC12.begin(9600);  // default HC-12 baud rate
+
+  Wire.begin(UNO_ADDR);
+  Wire.onReceive(receiveEvent);
+
+  Serial.println("UNO Ready - Forwarding to HC-12...");
+}
+
+void loop() {
+  if (newData) {
+    newData = false;
+
+    // Print locally
+    Serial.print("Received: ");
+    Serial.println(receivedData);
+
+    // Send over HC-12
+    HC12.print(receivedData);
+  }
+}
+
+// I2C receive handler
+void receiveEvent(int numBytes) {
+  int i = 0;
+
+  while (Wire.available() && i < sizeof(receivedData) - 1) {
+    receivedData[i++] = Wire.read();
+  }
+
+  receivedData[i] = '\0';
+  newData = true;
+}
