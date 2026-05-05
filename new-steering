@@ -47,7 +47,8 @@ void loop() {
   float cx, cy, tx, ty;
   readGPS();
   heading = readCompass();
-
+  indexToXY(CurrentIndex, cx, cy);
+  indexToXY(targetIndex, tx, ty);
   double distanceToTarget = getDistance(cx, cy, tx, ty;);
 
   double targetBearing = getBearing(cx, cy, tx, ty;);
