@@ -1,10 +1,5 @@
 #include <Servo.h>
 #include <Wire.h>
-
-//--------------------- IMU ----------------------
-#define HMC5883L_ADDR 0x1E
-#define ITG3205_ADDR  0x68
-
 // -------------------- LIDAR --------------------
 #define LIDAR_ADDR 0x10
 #define UNO_ADDR 8
@@ -20,7 +15,6 @@ Servo ESC2;
 enum State {
 OFF,
 POWERUP, // Lift motors on
-CALCHEADING, // Calculates heading, distance, etc
 ACHEIVEHEADING, // Prop motors and rudders on, acheive correct heading
 HEADING, // Go stright (prop motors on). if obstacle detected:
 OBSTACLE_LEFT, // Obstacle avoidance left
@@ -45,17 +39,14 @@ int current_waypoint = 0;
 
 float currentX = 0.0;
 float currentY = 0.0;
+
 float heading = 0.0;
+
 float distance_to_target = 0.0;
-float sweep_dist = 10.0; // Adjust this value
+
 float veer_distance = 15.0; // Adjust this value
 int veerAngleLeft = 45; // Adjust this servo angle
 int veerAngleRight = 135; // Adjust this servo angle
-
-// ------ IMU variables -------
-float gyroZ = 0;
-float mag_heading;
-float heading_imu = 0;
 
 float target_heading = 0;
 float current_heading = 0;
@@ -112,30 +103,6 @@ Serial.println("TF-Luna I2C test");
 
 // IMU setup
 
-// Init Magnetometer (HMC5883L)
-Wire.beginTransmission(HMC5883L_ADDR);
-Wire.write(0x00); // Config A
-Wire.write(0x70);
-Wire.endTransmission();
-
-Wire.beginTransmission(HMC5883L_ADDR);
-Wire.write(0x01); // Config B
-Wire.write(0x20);
-Wire.endTransmission();
-
-Wire.beginTransmission(HMC5883L_ADDR);
-Wire.write(0x02); // Mode
-Wire.write(0x00); // Continuous mode
-Wire.endTransmission();
-
-// Init Gyro (ITG3205)
-Wire.beginTransmission(ITG3205_ADDR);
-Wire.write(0x3E); // Power management
-Wire.write(0x00);
-Wire.endTransmission();
-
-imu_lastTime = millis();
-
 // MEGA TO UNO TEST
 Wire.beginTransmission(UNO_ADDR);
 Wire.write("Mega - Uno comms working\n"); // send simple text
@@ -146,138 +113,138 @@ byte error = Wire.endTransmission();
 // -------------------- LOOP -------------------------------------
 void loop() {
 
-switch (current_state) {
-
-
-case OFF:
-
-  if (current_waypoint >= num_waypoints) {
-  ESC1.writeMicroseconds(prop_stop);
-  }
-  else {
-  delay(1000);
-  current_state = POWERUP;
-  }
-
-break;
-
-  case POWERUP:
-  // Lift motor arming (always on)
-  ESC2.writeMicroseconds(lift_speed);
-  current_state = ACHEIVEHEADING;
-  break;
-
-case ACHEIVEHEADING:
+  switch (current_state) {
   
-  updateIMU();
-  waypoint target = path[current_waypoint];
-  computeHeading(currentX, currentY, target.x, target.y);
-  target_heading = heading;
-
-  Serial.print("Distance (cm): ");
-  Serial.println(distance_to_target);
-
-  Serial.print("Heading (deg): ");
-  Serial.println(heading);
-
-  current_heading = heading_imu;
-  acheiveDirection(current_heading, target_heading);
-
-  current_state = HEADING;
-  break;
-
-// Go straight for d distance, constantly scanning for obstacles
-case HEADING:
   
-  updatePosition();
-
-  acheiveDirection(heading_imu, target_heading);
-
-  // Set prop motor speed indefinitely
-  if (distance_to_target > 10) {
-  ESC1.writeMicroseconds(prop_slow);
-  static int pos = 0;
-  static int dir = 1;
-  static unsigned long lastMove = 0;
-
-  if (millis() - lastMove >= 50) {
-  lastMove = millis();
-
-  miniServo.write(pos);
-  pos += dir;
-
-  if (pos >= 180 || pos <= 0) dir *= -1;
-
-  waypoint target = path[current_waypoint];
-
-  distance_to_target = sqrt(
-    pow(target.x - currentX, 2) +
-    pow(target.y - currentY, 2)
-  );
-
-  uint16_t dist = readDistance();
-  if (dist < 20) {
-  if (pos < 90) {
-  current_state = OBSTACLE_LEFT;
-  }
-  else {
-  current_state = OBSTACLE_RIGHT;
-  }
-
-  char buffer[32];
-  snprintf(buffer, sizeof(buffer), "A:%d D:%u\n", pos, dist);
-  sendToUNO(buffer);
-  }
-  }
-  }
-  else {
-  current_waypoint = current_waypoint +1;
-  current_state = REACHED;
-  }
-
-  break;
-
-case OBSTACLE_LEFT:
-
-veerManouverLeft();
-
-  // The birds-eye distance it took for the hovercraft to veer then get back on track is deducted
-  distance_to_target = distance_to_target - veer_distance;
-
-  if (distance_to_target > 5) {
-  current_state = HEADING;
-  }
-  else {
-  current_state = REACHED;
-  current_waypoint++;
-  }
-  break;
-
-case OBSTACLE_RIGHT:
-
-  // And the obstacle is on the left (<90degrees)
-
-  veerManouverRight();
-
-  // The birds-eye distance it took for the hovercraft to veer then get back on track is deducted
-  distance_to_target = distance_to_target - veer_distance;
-
-  if (distance_to_target > 5) {
-  current_state = HEADING;
-  }
-  else {
-  current_state = REACHED;
-  current_waypoint++;
-  }
-  break;
-
-case REACHED:
-ESC1.writeMicroseconds(prop_stop);
-if (current_waypoint >= num_waypoints){
-// Add finish logic here
-}
-break; // <-- FIXED: Added missing break
-}
+  case OFF:
+  
+    if (current_waypoint >= num_waypoints) {
+    ESC1.writeMicroseconds(prop_stop);
+    }
+    else {
+    delay(1000);
+    current_state = POWERUP;
+    }
+  
+    break;
+  
+ case POWERUP:
+    // Lift motor arming (always on)
+    ESC2.writeMicroseconds(lift_speed);
+    current_state = ACHEIVEHEADING;
+    break;
+  
+  case ACHEIVEHEADING:
+    
+    updateIMU();
+    waypoint target = path[current_waypoint];
+    computeHeading(currentX, currentY, target.x, target.y);
+    target_heading = heading;
+  
+    Serial.print("Distance (cm): ");
+    Serial.println(distance_to_target);
+  
+    Serial.print("Heading (deg): ");
+    Serial.println(heading);
+  
+    current_heading = heading_imu;
+    acheiveDirection(current_heading, target_heading);
+  
+    current_state = HEADING;
+    break;
+  
+  // Go straight for d distance, constantly scanning for obstacles
+  case HEADING:
+    
+    updatePosition();
+  
+    acheiveDirection(heading_imu, target_heading);
+  
+    // Set prop motor speed indefinitely
+    if (distance_to_target > 10) {
+    ESC1.writeMicroseconds(prop_slow);
+    static int pos = 0;
+    static int dir = 1;
+    static unsigned long lastMove = 0;
+  
+    if (millis() - lastMove >= 50) {
+    lastMove = millis();
+  
+    miniServo.write(pos);
+    pos += dir;
+  
+    if (pos >= 180 || pos <= 0) dir *= -1;
+  
+    waypoint target = path[current_waypoint];
+  
+    distance_to_target = sqrt(
+      pow(target.x - currentX, 2) +
+      pow(target.y - currentY, 2)
+    );
+  
+    uint16_t dist = readDistance();
+    if (dist < 20) {
+    if (pos < 90) {
+    current_state = OBSTACLE_LEFT;
+    }
+    else {
+    current_state = OBSTACLE_RIGHT;
+    }
+  
+    char buffer[32];
+    snprintf(buffer, sizeof(buffer), "A:%d D:%u\n", pos, dist);
+    sendToUNO(buffer);
+    }
+    }
+    }
+    else {
+    current_waypoint = current_waypoint +1;
+    current_state = REACHED;
+    }
+  
+    break;
+  
+  case OBSTACLE_LEFT:
+  
+    veerManouverLeft();
+  
+    // The birds-eye distance it took for the hovercraft to veer then get back on track is deducted
+    distance_to_target = distance_to_target - veer_distance;
+  
+    if (distance_to_target > 5) {
+    current_state = HEADING;
+    }
+    else {
+    current_state = REACHED;
+    current_waypoint++;
+    }
+    break;
+  
+  case OBSTACLE_RIGHT:
+  
+    // And the obstacle is on the left (<90degrees)
+  
+    veerManouverRight();
+  
+    // The birds-eye distance it took for the hovercraft to veer then get back on track is deducted
+    distance_to_target = distance_to_target - veer_distance;
+  
+    if (distance_to_target > 5) {
+    current_state = HEADING;
+    }
+    else {
+    current_state = REACHED;
+    current_waypoint++;
+    }
+    break;
+  
+  case REACHED:
+    ESC1.writeMicroseconds(prop_stop);
+    if (current_waypoint >= num_waypoints){
+    // Add finish logic here
+    }
+    break; // <-- FIXED: Added missing break
+    }
 
 } // <-- FIXED: This bracket safely closes the loop() function now.
 
