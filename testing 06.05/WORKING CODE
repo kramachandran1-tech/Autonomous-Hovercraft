@@ -1,0 +1,243 @@
+#include <Servo.h>
+#include <Wire.h>
+
+#define MPU_ADDR 0x68
+
+// ---------------- ACTUATORS ----------------
+Servo rudder1, rudder2;
+Servo ESC1, ESC2;
+
+// ---------------- WAYPOINT ----------------
+struct waypoint {
+  float x;
+  float y;
+};
+
+waypoint target = {50, 300};
+
+// ---------------- STATE ----------------
+float currentX = 0;
+float currentY = 0;
+
+float heading_imu = 0;
+float filteredHeading = 0;
+float target_heading = 0;
+
+// ---------------- IMU ----------------
+int16_t gz;
+float gyroZ_offset = 0;
+
+// ---------------- PID ----------------
+float Kp = 1.2, Ki = 0.0, Kd = 1.0;
+
+float integral = 0;
+float previousError = 0;
+
+// ---------------- KALMAN ----------------
+float kAngle = 0, kUncertainty = 2;
+float processNoise = 0.05, measurementNoise = 6;
+
+// ---------------- SPEED ----------------
+float speed_cm_per_sec = 20.0;
+
+// ---------------- TIMERS ----------------
+unsigned long imu_lastTime = 0;
+unsigned long pid_lastTime = 0;
+unsigned long pos_lastTime = 0;
+
+// ---------------- RUDDER TRIM ----------------
+int rudder1_trim = 0;
+int rudder2_trim = 0;
+
+// =================================================
+void setup() {
+
+  ESC1.attach(8, 1000, 2000);
+  ESC2.attach(10, 1000, 2000);
+
+  rudder1.attach(4);
+  rudder2.attach(5);
+
+  Serial.begin(115200);
+  Wire.begin();
+
+  // Wake MPU
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x6B);
+  Wire.write(0);
+  Wire.endTransmission(true);
+
+  calibrateGyro();
+
+  // CENTER SERVOS (VERY IMPORTANT)
+  rudder1.write(90);
+  rudder2.write(90);
+  delay(1000);
+
+// ARM ESCs properly
+ESC1.writeMicroseconds(1500);  // neutral
+ESC2.writeMicroseconds(1500);
+delay(3000);
+
+  imu_lastTime = millis();
+  pid_lastTime = millis();
+  pos_lastTime = millis();
+
+  float distance = computeDistance(currentX, currentY, target.x, target.y);
+  target_heading = computeHeading(currentX, currentY, target.x, target.y);
+}
+
+void loop() {
+
+  // --- SENSOR UPDATE ---
+  updateIMU();
+  filteredHeading = updateKalman(heading_imu);
+
+  // --- NAVIGATION UPDATE ---
+  float distance = computeDistance(currentX, currentY, target.x, target.y);
+  target_heading = computeHeading(currentX, currentY, target.x, target.y);
+
+  // lift always on
+  ESC2.writeMicroseconds(1700);
+  ESC1.writeMicroseconds(1500);  // or even 1700 for testing
+
+  // --- CONTROL ---
+  controlRudder(filteredHeading, target_heading);
+
+
+
+  // --- DEBUG ---
+  /Serial.print("Dist: ");
+  //Serial.print(distance);
+  Serial.print(" Heading: ");
+  Serial.print(filteredHeading);
+  Serial.print(" X:");
+  Serial.print(currentX);
+  Serial.print(" Y:");
+  Serial.println(currentY);
+}
+// =================================================
+// NAVIGATION
+// =================================================
+float computeDistance(float x, float y, float tx, float ty) {
+  float dx = tx - x;
+  float dy = ty - y;
+  return sqrt(dx * dx + dy * dy);
+}
+
+float computeHeading(float x, float y, float tx, float ty) {
+  float angle = atan2(ty - y, tx - x) * 180.0 / PI;
+  if (angle < 0) angle += 360;
+  return angle;
+}
+
+// =================================================
+// RUDDER CONTROL (FIXED + SYMMETRIC)
+// =================================================
+void controlRudder(float current, float target) {
+
+  // shortest angle error [-180, 180]
+  float error = fmod((target - current + 540.0), 360.0) - 180.0;
+
+  unsigned long now = millis();
+  float dt = (now - pid_lastTime) / 1000.0;
+  pid_lastTime = now;
+  if (dt <= 0) dt = 0.01;
+
+  // PID
+  integral += error * dt;
+  integral = constrain(integral, -100, 100); // anti-windup
+
+  float derivative = (error - previousError) / dt;
+  previousError = error;
+
+  float output = Kp * error + Ki * integral + Kd * derivative;
+
+  output = constrain(output, -45, 45);
+
+  // base rudder angle
+  int baseAngle = constrain(90 + output, 45, 135);
+
+  // SYMMETRIC OUTPUT (FIX FOR DELTA SHAPE)
+  int angle1 = constrain(baseAngle + rudder1_trim, 45, 135);
+  int angle2 = constrain(baseAngle + rudder2_trim, 45, 135);
+
+  rudder1.write(angle1);
+  rudder2.write(angle2);
+}
+
+// =================================================
+// KALMAN FILTER (light smoothing)
+// =================================================
+float updateKalman(float measurement) {
+
+  kUncertainty += processNoise;
+
+  float K = kUncertainty / (kUncertainty + measurementNoise);
+
+  kAngle = kAngle + K * (measurement - kAngle);
+  kUncertainty = (1 - K) * kUncertainty;
+
+  return kAngle;
+}
+
+// =================================================
+// IMU
+// =================================================
+void readMPU() {
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x47);
+  Wire.endTransmission(false);
+  Wire.requestFrom(MPU_ADDR, 2, true);
+
+  if (Wire.available() == 2) {
+    gz = Wire.read() << 8 | Wire.read();
+  }
+}
+
+void updateIMU() {
+
+  unsigned long now = millis();
+  float dt = (now - imu_lastTime) / 1000.0;
+  imu_lastTime = now;
+  if (dt <= 0) dt = 0.01;
+
+  readMPU();
+
+  float rate = (gz - gyroZ_offset) / 131.0;
+
+  heading_imu += rate * dt;
+
+  if (heading_imu >= 360) heading_imu -= 360;
+  if (heading_imu < 0) heading_imu += 360;
+}
+
+void calibrateGyro() {
+  long sum = 0;
+
+  for (int i = 0; i < 500; i++) {
+    readMPU();
+    sum += gz;
+    delay(2);
+  }
+
+  gyroZ_offset = sum / 500.0;
+}
+
+// =================================================
+// POSITION MODEL
+// =================================================
+void updatePosition() {
+
+  unsigned long now = millis();
+  float dt = (now - pos_lastTime) / 1000.0;
+  pos_lastTime = now;
+  if (dt <= 0) dt = 0.01;
+
+  float distance = speed_cm_per_sec * dt;
+
+  float rad = filteredHeading * PI / 180.0;
+
+  currentX += cos(rad) * distance;
+  currentY += sin(rad) * distance;
+}
