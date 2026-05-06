@@ -1,0 +1,435 @@
+#include <Servo.h>
+#include <Wire.h>
+
+// -------------------- SERVOs --------------------
+
+Servo rudder1;
+Servo rudder2;
+
+// -------------------- ESCs --------------------
+Servo ESC1;
+Servo ESC2;
+
+//----------------------IMU ------------------------
+#define MPU_ADDR 0x68
+
+enum State {
+OFF,
+POWERUP, // Lift motors on
+ACHEIVEHEADING, // Prop motors and rudders on, acheive correct heading
+HEADING, // Go stright (prop motors on). if obstacle detected:
+OBSTACLE_LEFT, // Obstacle avoidance left
+OBSTACLE_RIGHT, // Obstacle avoidance right
+REACHED,
+};
+
+struct waypoint { // Changed to singular to match your usage later
+float x;
+float y;
+};
+
+waypoint path[] = {
+{0, 0},
+{100, 50},
+{0, 150}
+};
+
+// Calc the number of waypoints available
+const int num_waypoints = sizeof(path) / sizeof(path[0]);
+int current_waypoint = 0;
+
+float currentX = 0.0;
+float currentY = 0.0;
+
+float distance_to_target = 0.0;
+
+float veer_distance = 15.0; // Adjust this value
+int veerAngleLeft = 45; // Adjust this servo angle
+int veerAngleRight = 135; // Adjust this servo angle
+
+float target_heading = 0;
+float heading_imu = 0.0;
+float heading = 0.0;
+float current_heading = 0.0;
+
+float gyroZ_offset = 0;
+unsigned long imu_lastTime = 0;
+
+// PID
+float Kp = 1.2;
+float Ki = 0.0;
+float Kd = 0.4;
+
+float integral = 0;
+float previousError = 0;
+unsigned long lastTime = 0;
+
+//Kalman
+float kAngle = 0;
+float kUncertainity = 2;
+float processNoise = 0.05;
+float measurementNoise = 2;
+
+State current_state = OFF;
+
+//IMU
+int16_t ax, ay, az;
+int16_t gx, gy, gz;
+
+// Relavant values
+const int lift_speed = 1100; // adjust for your motor/ESC (could be change depend on the ESC)
+const int prop_slow = 1200; // adjust for your motor/ESC (could be change depend on the ESC)
+const int prop_stop = 1000;
+
+float speed_cm_per_sec = 20.0; // <-- YOUR measured value
+unsigned long lastMoveTime = 0;
+
+bool obstacleDetected = false;
+
+// -------------------- SETUP --------------------
+void setup() {
+
+  // All ESCs setup - not moving
+  ESC1.attach(8, 1000, 2000);
+  ESC2.attach(10, 1000, 2000);
+  ESC1.writeMicroseconds(1000);
+  ESC2.writeMicroseconds(1000);
+  delay(2000);
+
+  //All mini servos setup
+  rudder1.attach(4); // Rudder 1 setup
+  rudder2.attach(5); // Rudder 2 setup
+
+  // Serial 0 (Pins 0 & 1) - To Computer/Serial Monitor
+  Serial.begin(115200);
+
+  Wire.begin(); // still needed for MPU
+
+  Serial1.begin(9600); // UART from UNO
+  Serial.println("Mega ready (waiting for UNO obstacle signal)");
+
+  // IMU setup
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x6B);
+  Wire.write(0);
+  Wire.endTransmission(true);
+
+  delay(100);
+
+  Serial.println("Calibrating gyro...");
+  calibrateGyro();
+  Serial.println("Done.");
+
+  imu_lastTime = millis();
+  lastTime = millis();
+  lastMoveTime = millis();
+
+
+}
+
+// -------------------- LOOP -------------------------------------
+void loop() {
+
+  updateIMU();
+  checkUART();
+  switch (current_state) {
+  
+  
+  case OFF:
+  
+    if (current_waypoint >= num_waypoints) {
+    ESC1.writeMicroseconds(prop_stop);
+    }
+    else {
+    delay(1000);
+    current_state = POWERUP;
+    }
+  
+    break;
+  
+ case POWERUP:
+    // Lift motor arming (always on)
+    ESC2.writeMicroseconds(lift_speed);
+    current_state = ACHEIVEHEADING;
+    break;
+  
+  case ACHEIVEHEADING:
+    
+    updateIMU();
+    waypoint target = path[current_waypoint];
+    computeHeading(currentX, currentY, target.x, target.y);
+    target_heading = heading;
+  
+    Serial.print("Distance (cm): ");
+    Serial.println(distance_to_target);
+  
+    Serial.print("Heading (deg): ");
+    Serial.println(heading);
+  
+    current_heading = heading_imu;
+    acheiveDirection(current_heading, target_heading);
+  
+    current_state = HEADING;
+    break;
+  
+  // Go straight for d distance, constantly scanning for obstacles
+  case HEADING:
+    
+    updatePosition();
+  
+    acheiveDirection(heading_imu, target_heading);
+  
+    // Set prop motor speed indefinitely
+    if (distance_to_target > 10) {
+    ESC1.writeMicroseconds(prop_slow);
+  
+    waypoint target = path[current_waypoint];
+  
+    distance_to_target = sqrt(
+      pow(target.x - currentX, 2) +
+      pow(target.y - currentY, 2)
+    );
+
+    if (obstacleDetected) {
+
+      current_state = OBSTACLE_LEFT;
+
+    obstacleDetected = false; // reset after handling
+  }
+
+    }
+    }
+    else {
+    current_waypoint = current_waypoint +1;
+    current_state = REACHED;
+    }
+  
+    break;
+  
+  case OBSTACLE_LEFT:
+  
+    veerManouverLeft();
+  
+    // The birds-eye distance it took for the hovercraft to veer then get back on track is deducted
+    distance_to_target = distance_to_target - veer_distance;
+  
+    if (distance_to_target > 5) {
+    current_state = HEADING;
+    }
+    else {
+    current_state = REACHED;
+    current_waypoint++;
+    }
+    break;
+  
+  case OBSTACLE_RIGHT:
+  
+    // And the obstacle is on the left (<90degrees)
+  
+    veerManouverRight();
+  
+    // The birds-eye distance it took for the hovercraft to veer then get back on track is deducted
+    distance_to_target = distance_to_target - veer_distance;
+  
+    if (distance_to_target > 5) {
+    current_state = HEADING;
+    }
+    else {
+    current_state = REACHED;
+    current_waypoint++;
+    }
+    break;
+  
+  case REACHED:
+    ESC1.writeMicroseconds(prop_stop);
+    if (current_waypoint >= num_waypoints){
+    // Add finish logic here
+    }
+    break; // <-- FIXED: Added missing break
+    }
+
+} // <-- FIXED: This bracket safely closes the loop() function now.
+
+
+void checkUART() {
+  if (Serial1.available()) {
+    String msg = Serial1.readStringUntil('\n');
+
+    if (msg == "OBSTACLE") {
+      obstacleDetected = true;
+      Serial.println("⚠ Obstacle signal received from UNO");
+    }
+  }
+}
+
+void computeHeading(float x, float y, float tx, float ty)
+{
+  float dx = tx - x;
+  float dy = ty - y;
+
+  // FIXED: Changed dist_to_targ to distance_to_target to match global variable
+  distance_to_target = sqrt (dx * dx + dy * dy);
+
+  float angle_rad = atan2(dy, dx);
+
+  // FIXED: Changed angle_radians to angle_rad
+  heading = angle_rad * 180.0 / PI;
+
+  if (heading < 0 ) {
+  heading += 360.0;
+  }
+}
+
+void veerManouverLeft()
+{
+  Serial.println("Starting Veer left");
+  rudder1.write(veerAngleLeft);
+  rudder2.write(veerAngleLeft);
+  delay(500);
+
+  Serial.println("Starting Veer right");
+  rudder1.write(veerAngleRight);
+  rudder2.write(veerAngleRight);
+  delay(500);
+}
+
+void veerManouverRight()
+{
+  Serial.println("Starting Veer right");
+  rudder1.write(veerAngleRight);
+  rudder2.write(veerAngleRight);
+  delay(500);
+
+  Serial.println("Starting Veer left");
+  rudder1.write(veerAngleLeft);
+  rudder2.write(veerAngleLeft);
+  delay(500);
+}
+
+//-----------------PID------------------
+float computePID(float error)
+{
+  unsigned long now = millis();
+
+  // FIXED: Changed capital 'Now' to lowercase 'now'
+  float dt = (now - lastTime) / 1000.0;
+
+  if (dt <= 0) dt = 0.01;
+
+  lastTime = now;
+
+  integral += error * dt;
+  float derivative = (error - previousError) / dt;
+
+  float output = Kp * error + Ki * integral + Kd * derivative;
+
+  previousError = error;
+
+  return output;
+}
+
+// -----------------KALMAN---------------
+float updateKalman(float measurement)
+{
+  kUncertainity += processNoise;
+
+  float K = kUncertainity / (kUncertainity + measurementNoise);
+
+  kAngle = kAngle + K * (measurement - kAngle);
+  kUncertainity = (1 - K) * kUncertainity;
+
+  return kAngle;
+}
+
+// FIXED: Added missing placeholder function so your code compiles
+void acheiveDirection(float current_heading, float target_heading) {
+
+  float error = target_heading - current_heading;
+
+  if (error > 180) error -= 360;
+  if (error < -180) error += 360;
+
+  float correction = computePID(error);
+  correction = constrain(correction, -40, 40);
+
+  int base = 90;
+  int output = base + correction;
+
+  rudder1.write(output);
+  rudder2.write(output);
+}
+
+//----------------------IMU SENSORS-------------------
+void readMPU() {
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x3B);
+  Wire.endTransmission(false);
+  Wire.requestFrom(MPU_ADDR, 14, true);
+
+  if (Wire.available() == 14) {
+    ax = Wire.read() << 8 | Wire.read();
+    ay = Wire.read() << 8 | Wire.read();
+    az = Wire.read() << 8 | Wire.read();
+
+    Wire.read(); Wire.read(); // temp
+
+    gx = Wire.read() << 8 | Wire.read();
+    gy = Wire.read() << 8 | Wire.read();
+    gz = Wire.read() << 8 | Wire.read();
+  }
+}
+
+
+void updateIMU()
+{
+  unsigned long now = millis();
+  float dt = (now - imu_lastTime) / 1000.0;
+  imu_lastTime = now;
+
+  if (dt <= 0) dt = 0.01;
+
+  readMPU();
+
+  // Convert gyro Z to deg/sec
+  float gyroZ_rate = (gz - gyroZ_offset) / 131.0;
+  // Integrate to get heading
+  heading_imu += gyroZ_rate * dt;
+
+  // Wrap angle
+  if (heading_imu >= 360) heading_imu -= 360;
+  if (heading_imu < 0) heading_imu += 360;
+}
+
+void calibrateGyro() {
+  long sum = 0;
+  int samples = 500;
+
+  for (int i = 0; i < samples; i++) {
+    readMPU();
+    sum += gz;
+    delay(2);
+  }
+
+  gyroZ_offset = sum / (float)samples;
+}
+
+////////////////////////////////////////////////////////////////////
+
+// -------- DO NOT CHANGE ANYTHING PAST HERE - ALL UTILITIES ----------
+
+void updatePosition()
+{
+  unsigned long now = millis();
+  float dt = (now - lastMoveTime) / 1000.0; // seconds
+  lastMoveTime = now;
+
+  // Distance moved in this timestep
+  float distance = speed_cm_per_sec * dt;
+
+  // Convert heading to radians
+  float rad = heading_imu * PI / 180.0;
+
+  // Update grid position
+  currentX += cos(rad) * distance;
+  currentY += sin(rad) * distance;
+}
