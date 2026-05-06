@@ -1,0 +1,171 @@
+#include <Servo.h>
+#include <Wire.h>
+
+#define MPU_ADDR 0x68
+
+Servo rudder1;
+Servo rudder2;
+
+float heading_imu = 0;
+float gyroZ_offset = 0;
+unsigned long imu_lastTime = 0;
+
+int16_t gz;
+
+// ================= PID =================
+float Kp = 1.2;
+float Ki = 0.0;
+float Kd = 1;
+
+float integral = 0;
+float previousError = 0;
+unsigned long lastTime = 0;
+
+// ================= KALMAN =================
+float kAngle = 0;
+float kUncertainty = 2;
+float processNoise = 0.05;
+float measurementNoise = 6;
+float targetHeading = 90;
+
+// =================================================
+void setup() {
+  rudder1.attach(4);
+  rudder2.attach(5);
+
+  Serial.begin(115200);
+  Wire.begin();
+
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x6B);
+  Wire.write(0);
+  Wire.endTransmission(true);
+
+  Serial.println("Calibrating gyro...");
+  calibrateGyro();
+  Serial.println("Done.");
+}
+
+// =================================================
+void loop() {
+
+  updateIMU();
+
+  float filteredHeading = updateKalman(heading_imu);
+
+  controlHeading(targetHeading, filteredHeading);
+
+  Serial.print("Raw: ");
+  Serial.print(heading_imu);
+  Serial.print(" Filtered: ");
+  Serial.print(filteredHeading);
+  Serial.print(" Target: ");
+  Serial.println(targetHeading);
+
+  delay(50);
+}
+
+// =================================================
+// HEADING CONTROL
+// =================================================
+void controlHeading(float target, float currentHeading) {
+
+  float error = getHeadingError(target, currentHeading);
+
+  if (abs(error) < 2) error = 0;
+
+  float output = computePID(error);
+
+  output = constrain(output, -45, 45);
+
+  int servoAngle = 90 + output;
+  servoAngle = constrain(servoAngle, 45, 135);
+
+  rudder1.write(servoAngle);
+  rudder2.write(servoAngle);
+}
+
+// =================================================
+float getHeadingError(float target, float current) {
+  float error = target - current;
+
+  if (error > 180) error -= 360;
+  if (error < -180) error += 360;
+
+  return error;
+}
+
+// =================================================
+// PID
+// =================================================
+float computePID(float error) {
+  unsigned long now = millis();
+  float dt = (now - lastTime) / 1000.0;
+  if (dt <= 0) dt = 0.01;
+
+  lastTime = now;
+
+  integral += error * dt;
+  float derivative = (error - previousError) / dt;
+
+  float output = Kp * error + Ki * integral + Kd * derivative;
+
+  previousError = error;
+
+  return output;
+}
+
+// =================================================
+// KALMAN FILTER (your original, cleaned)
+// =================================================
+float updateKalman(float measurement) {
+
+  kUncertainty += processNoise;
+
+  float K = kUncertainty / (kUncertainty + measurementNoise);
+
+  kAngle = kAngle + K * (measurement - kAngle);
+  kUncertainty = (1 - K) * kUncertainty;
+
+  return kAngle;
+}
+
+// =================================================
+// IMU
+// =================================================
+void readMPU() {
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x47);
+  Wire.endTransmission(false);
+  Wire.requestFrom(MPU_ADDR, 2, true);
+
+  if (Wire.available() == 2) {
+    gz = Wire.read() << 8 | Wire.read();
+  }
+}
+
+void updateIMU() {
+  unsigned long now = millis();
+  float dt = (now - imu_lastTime) / 1000.0;
+  imu_lastTime = now;
+
+  if (dt <= 0) dt = 0.01;
+
+  readMPU();
+
+  float rate = (gz - gyroZ_offset) / 131.0;
+  heading_imu += rate * dt;
+
+  if (heading_imu >= 360) heading_imu -= 360;
+  if (heading_imu < 0) heading_imu += 360;
+}
+
+void calibrateGyro() {
+  long sum = 0;
+  for (int i = 0; i < 500; i++) {
+    readMPU();
+    sum += gz;
+    delay(2);
+  }
+  gyroZ_offset = sum / 500.0;
+}
