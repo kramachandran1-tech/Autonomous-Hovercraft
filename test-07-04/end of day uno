@@ -1,0 +1,78 @@
+#include <Servo.h>
+#include <Wire.h>
+
+#define LIDAR_ADDR 0x10
+
+Servo myServo;
+
+const int signalPin = 7;
+const int obstacleThreshold = 10; // cm
+
+void setup() {
+
+  myServo.attach(9);
+
+  pinMode(signalPin, OUTPUT);
+  digitalWrite(signalPin, LOW);
+
+  Serial.begin(115200);
+  Wire.begin();
+
+  Serial.println("TF-Luna I2C test");
+}
+
+void checkDistance() {
+
+  Wire.beginTransmission(LIDAR_ADDR);
+  Wire.write(0x00);
+  Wire.endTransmission();
+
+  Wire.requestFrom(LIDAR_ADDR, 2);
+
+  if (Wire.available() >= 2) {
+
+    uint16_t dist = Wire.read();
+    dist |= Wire.read() << 8;
+
+    Serial.print("Distance: ");
+    Serial.print(dist);
+    Serial.println(" cm");
+
+    if (dist < obstacleThreshold) {
+
+      digitalWrite(signalPin, HIGH);
+
+      Serial.println("Obstacle detected -> SIGNAL HIGH");
+
+    } else {
+
+      digitalWrite(signalPin, LOW);
+    }
+
+  } else {
+
+    Serial.println("No data");
+    digitalWrite(signalPin, LOW);
+  }
+}
+
+void loop() {
+
+  for (int pos = 0; pos <= 45; pos++) {
+
+    myServo.write(pos);
+
+    checkDistance();
+
+    delay(20);
+  }
+
+  for (int pos = 45; pos >= 0; pos--) {
+
+    myServo.write(pos);
+
+    checkDistance();
+
+    delay(20);
+  }
+}
