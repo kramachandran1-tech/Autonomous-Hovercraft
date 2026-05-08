@@ -1,0 +1,85 @@
+#include <Wire.h>
+#include <MPU9250_asukiaaa.h>
+#include <math.h>
+
+MPU9250_asukiaaa mySensor;
+
+
+// --- Heading state ---
+float startHeadingDeg = 0.0;
+bool headingInitialized = false;
+
+
+void setup() {
+  Serial.begin(115200);
+  while (!Serial);
+
+  Wire.begin();
+
+  mySensor.setWire(&Wire);
+
+  // Initialize accel + gyro
+  mySensor.beginAccel();
+  mySensor.beginGyro();
+
+  // Initialize magnetometer
+  mySensor.beginMag();
+
+  Serial.println("MPU9250 Test Starting...");
+}
+
+void loop() {
+
+  float relativeAngle = getRelativeHeadingDeg();
+
+  Serial.print("Relative Heading: ");
+  Serial.print(relativeAngle);
+  Serial.println(" deg");
+
+  delay(200);
+}
+
+// Normalize angle to [-180, 180]
+float normalizeAngle(float angle) {
+  while (angle > 180.0) angle -= 360.0;
+  while (angle < -180.0) angle += 360.0;
+  return angle;
+}
+
+// Read absolute compass heading from magnetometer
+float getMagHeadingDeg() {
+  mySensor.magUpdate();
+
+  float mx = mySensor.magX();
+  float my = mySensor.magY();
+
+  // atan2 gives heading in radians
+  float heading = atan2(my, mx) * 180.0 / PI;
+
+  // Convert from [-180,180] to [0,360]
+  if (heading < 0) {
+    heading += 360.0;
+  }
+
+  return heading;
+}
+
+
+// Returns angle relative to startup direction
+// Startup direction = 0 degrees
+float getRelativeHeadingDeg() {
+
+  float currentHeading = getMagHeadingDeg();
+
+  // Capture initial heading once
+  if (!headingInitialized) {
+    startHeadingDeg = currentHeading;
+    headingInitialized = true;
+  }
+
+  // Relative angle
+  float relative = currentHeading - startHeadingDeg;
+
+  // Keep clean range
+  return normalizeAngle(relative);
+}
